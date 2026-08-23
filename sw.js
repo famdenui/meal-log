@@ -10,7 +10,7 @@
    ページ側の localStorage キューが持っていて、オンライン復帰時に流す。
    ============================================================ */
 
-const VERSION = 'v7';
+const VERSION = 'v8';
 const SHELL   = `nt-shell-${VERSION}`;   // 自分のファイル
 const VENDOR  = `nt-vendor-${VERSION}`;  // esm.sh / Google Fonts
 
@@ -118,6 +118,9 @@ self.addEventListener('push', (e) => {
     body: p.body ?? '',
     tag: p.tag ?? 'nt',
     renotify: false,
+    // デスクトップでは操作するまで残る。iOSは非対応なので無視される
+    // （その代わり、内容はアプリ内にも表示している）
+    requireInteraction: true,
     icon: './icon-192.png',
     badge: './icon-192.png',
     data: { url: p.url ?? './' },

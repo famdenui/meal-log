@@ -132,6 +132,14 @@ header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-sp
   background:var(--ink);color:var(--on-ink);border-color:var(--ink);font-weight:500}
 .slot-label{font-size:12px;color:var(--muted);margin:0 0 7px}
 
+/* --- 届いた通知の控え ---------------------------------------- */
+.coach{background:var(--paper);border:1px solid var(--line);border-left:3px solid var(--ai);
+  border-radius:var(--r);padding:13px 15px;margin-top:10px}
+.coach .hd{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.coach .hd b{font-size:14px;font-weight:700}
+.coach .hd time{font-family:var(--mono);font-size:11px;color:var(--muted);flex:none}
+.coach p{margin:5px 0 0;font-size:13px;color:var(--ink-2);line-height:1.6}
+
 /* --- 通知 --------------------------------------------------- */
 .notify{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
   padding:14px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
@@ -248,6 +256,7 @@ input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--ai);outl
 
 <div class="wrap" id="app" hidden>
   <section class="ledger" id="ledger"></section>
+  <div id="coach"></div>
 
   <p class="eyebrow">よく食べるもの</p>
   <div class="chips" id="quick"></div>
@@ -547,14 +556,17 @@ async function signInPw() {
 
 async function refresh() {
   const hour = Number(new Date(Date.now()+9*3600e3).toISOString().slice(11,13));
-  const [tg, ent, fd, exp, rv] = await Promise.all([
+  const [tg, ent, fd, exp, rv, nf] = await Promise.all([
     sb.rpc('nt_daily_target', { p_user: state.user.id, p_day: DAY }),
     sb.from('nt_meal_entry').select('id,eaten_at,note,meal_slot,kcal,protein_g,fat_g,carb_g')
       .eq('eaten_on', DAY).order('eaten_at'),
     sb.from('nt_food').select('*').eq('is_archived', false)
       .order('use_count', { ascending:false }).limit(8),
     sb.rpc('nt_expected_rest_of_day', { p_user: state.user.id, p_day: DAY, p_hour: hour }),
-    sb.from('nt_weekly_report').select('*').order('week_end',{ascending:false}).limit(1)
+    sb.from('nt_weekly_report').select('*').order('week_end',{ascending:false}).limit(1),
+    // 通知バナーは一瞬で消える。中身はここに残っているので画面に出す
+    sb.from('nt_notify_log').select('title,body,sent_at')
+      .eq('day', DAY).order('sent_at',{ascending:false}).limit(1)
   ]);
   state.target   = tg.data?.[0] ?? null;
   state.entries  = ent.data ?? [];
@@ -563,6 +575,7 @@ async function refresh() {
   renderLedger();
   renderQuick();
   renderLog();
+  renderCoach(nf.data?.[0]);
   renderReview(rv.data?.[0]);
   renderNotify();
   if (state.target) {
@@ -823,6 +836,19 @@ function armDelete() {
     if (error) { console.error(error); b.disabled = false; toast('削除できませんでした'); return; }
     closeSheet(); toast('削除しました'); refresh();
   };
+}
+
+/* 今日届いた通知の控え。iOSのバナーは数秒で消え、
+   requireInteraction も効かないので、アプリ側に残しておかないと
+   「鳴ったのに何だったか分からない」で終わる */
+function renderCoach(n) {
+  const box = $('#coach');
+  if (!n) { box.innerHTML = ''; return; }
+  const t = new Date(n.sent_at).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
+  box.innerHTML = `<div class="coach">
+    <div class="hd"><b>${n.title ?? ''}</b><time>${t}</time></div>
+    <p>${n.body ?? ''}</p>
+  </div>`;
 }
 
 function renderReview(r) {
