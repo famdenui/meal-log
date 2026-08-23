@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#16211C">
+<meta name="theme-color" content="#141C26">
 <title>Meal-log</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
@@ -17,18 +17,24 @@
 <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 /* ============================================================
-   漆器（うるし）: 濃墨の地に朱と松葉。数字はタブular数字で桁を揃える
+   藍（あい）: 紺墨の地に藍と松葉。数字はタブular数字で桁を揃える
+
+   色は3状態を撃ち分けるためにある。全部を青にすると信号が死ぬので、
+   基調の藍＝まだ足りない、松葉＝届いた、金＝行き過ぎ、で使い分ける。
+   朱は削除ボタンだけに残す（取り返しのつかない操作の合図）
    ============================================================ */
 :root{
-  --bg:#E9EBE6;
+  --bg:#E9ECF1;
   --paper:#FFFFFF;
-  --ink:#16211C;
-  --ink-2:#3A4642;
-  --muted:#77817A;
-  --line:#D3D8D0;
-  --shu:#C4452D;        /* 朱 — 不足・行動を促す色 */
+  --ink:#141C26;
+  --ink-2:#3A4655;
+  --muted:#78828F;
+  --line:#D4D9E1;
+  --ai:#2B5C9B;         /* 藍 — 不足・行動を促す色 */
   --matsuba:#3A6B57;    /* 松葉 — 達成 */
   --kin:#B08A3E;        /* 金 — 超過の注意 */
+  --danger:#C4452D;     /* 朱 — 削除のみ */
+  --on-ink:#F1F4F8;     /* 濃地の上に載せる文字 */
   --r:4px;
   --pad:16px;
   --mono:"IBM Plex Mono",ui-monospace,monospace;
@@ -69,14 +75,14 @@ header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-sp
 .gauge-head .figs b{font-size:21px;font-weight:600;letter-spacing:-.02em}
 .gauge-head .figs span{font-size:12px;color:var(--muted);margin-left:3px}
 
-.track{position:relative;height:10px;background:#E4E7E1;border-radius:2px;overflow:hidden}
-.fill{position:absolute;inset:0 auto 0 0;background:var(--shu);border-radius:2px 0 0 2px;
+.track{position:relative;height:10px;background:#DEE3EA;border-radius:2px;overflow:hidden}
+.fill{position:absolute;inset:0 auto 0 0;background:var(--ai);border-radius:2px 0 0 2px;
       transition:width .45s cubic-bezier(.2,.7,.3,1)}
 .gauge.hit .fill{background:var(--matsuba)}
 .gauge.over .fill{background:var(--kin)}
 /* この先いつも通り食べた場合の着地点をハッチで見せる */
 .ghost{position:absolute;top:0;bottom:0;transition:left .45s,width .45s;
-  background:repeating-linear-gradient(115deg,#C4452D33 0 4px,transparent 4px 8px)}
+  background:repeating-linear-gradient(115deg,#2B5C9B33 0 4px,transparent 4px 8px)}
 .tick{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink);border-radius:1px}
 .gauge .note{margin:7px 0 0;font-size:12px;color:var(--muted)}
 .gauge .note b{font-family:var(--mono);color:var(--ink-2);font-weight:600}
@@ -87,7 +93,7 @@ header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-sp
   background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
   padding:9px 12px;font-size:13px;display:flex;gap:7px;align-items:center;
 }
-.chip:active{background:#F3F5F1}
+.chip:active{background:#EEF1F6}
 .chip .p{font-family:var(--mono);font-size:11px;color:var(--muted)}
 
 /* --- 記録リスト -------------------------------------------- */
@@ -101,21 +107,36 @@ header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-sp
 .log-row .v b{font-weight:600}
 .log-row .v span{color:var(--muted)}
 .log-row{width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer}
-.log-row:active{background:#F3F5F1}
+.log-row:active{background:#EEF1F6}
 .log-row .go{color:var(--muted);font-size:15px;flex:none;line-height:1}
 .empty{color:var(--muted);font-size:13px;padding:18px 2px}
-.danger{width:100%;padding:13px;font-size:13px;color:var(--shu);text-align:center}
-.danger.armed{background:var(--shu);color:#F4F6F2;border-radius:var(--r);font-weight:500}
+
+/* --- 食事の区分 -------------------------------------------- */
+.slot-head{display:flex;align-items:baseline;justify-content:space-between;margin:16px 2px 7px}
+.slot-head:first-child{margin-top:2px}
+.slot-head .nm{font-size:13px;font-weight:700;color:var(--ink-2)}
+.slot-head .sum{font-family:var(--mono);font-size:11px;color:var(--muted);
+  font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.slotsel{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 14px}
+.slotsel button{
+  padding:8px 13px;font-size:13px;border:1px solid var(--line);
+  border-radius:var(--r);background:var(--paper);color:var(--ink-2);
+}
+.slotsel button[aria-pressed="true"]{
+  background:var(--ink);color:var(--on-ink);border-color:var(--ink);font-weight:500}
+.slot-label{font-size:12px;color:var(--muted);margin:0 0 7px}
+.danger{width:100%;padding:13px;font-size:13px;color:var(--danger);text-align:center}
+.danger.armed{background:var(--danger);color:var(--on-ink);border-radius:var(--r);font-weight:500}
 
 /* --- 下部の操作 -------------------------------------------- */
 .dock{
   position:fixed;left:0;right:0;bottom:0;z-index:20;
-  background:linear-gradient(180deg,#E9EBE600,#E9EBE6 22%);
+  background:linear-gradient(180deg,#E9ECF100,#E9ECF1 22%);
   padding:16px var(--pad) calc(16px + env(safe-area-inset-bottom));
 }
 .dock-in{max-width:480px;margin:0 auto;display:flex;gap:8px}
 .btn{
-  flex:1;background:var(--ink);color:#F4F6F2;border-radius:var(--r);
+  flex:1;background:var(--ink);color:var(--on-ink);border-radius:var(--r);
   padding:15px 10px;font-size:14px;font-weight:500;text-align:center;
 }
 .btn:active{transform:translateY(1px)}
@@ -124,7 +145,7 @@ header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-sp
 
 /* --- シート（確認カード）----------------------------------- */
 .sheet{
-  position:fixed;inset:0;z-index:40;background:rgba(22,33,28,.45);
+  position:fixed;inset:0;z-index:40;background:rgba(20,28,38,.48);
   display:flex;align-items:flex-end;justify-content:center;
 }
 .sheet[hidden]{display:none}
@@ -137,7 +158,7 @@ header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-sp
 @keyframes rise{from{transform:translateY(18px);opacity:.4}to{transform:none;opacity:1}}
 .sheet-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px}
 .sheet-head h2{font-size:18px}
-.sheet-note{font-size:12px;color:var(--shu);margin:0 0 16px}
+.sheet-note{font-size:12px;color:var(--ai);margin:0 0 16px}
 
 /* --- 品目と量トグル ---------------------------------------- */
 .item{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);padding:13px 14px;margin-bottom:8px}
@@ -151,12 +172,12 @@ header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-sp
   border-right:1px solid var(--line);transition:background .15s;
 }
 .seg button:last-child{border-right:none}
-.seg button[aria-pressed="true"]{background:var(--ink);color:#F4F6F2;font-weight:500}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--on-ink);font-weight:500}
 .item-figs{margin-top:9px;font-family:var(--mono);font-size:12px;color:var(--muted);letter-spacing:.02em}
 .item-figs b{color:var(--ink);font-weight:600}
 
 .total{
-  background:var(--ink);color:#F4F6F2;border-radius:var(--r);
+  background:var(--ink);color:var(--on-ink);border-radius:var(--r);
   padding:14px 16px;display:flex;align-items:baseline;justify-content:space-between;margin:14px 0 10px;
 }
 .total .k{font-family:var(--mono);font-size:24px;font-weight:600;letter-spacing:-.02em}
@@ -164,33 +185,37 @@ header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-sp
 .total .p{font-family:var(--mono);font-size:13px;opacity:.8;text-align:right}
 
 /* --- 入力 --------------------------------------------------- */
-input[type=text],input[type=email],input[type=number],textarea{
+/* iOSは入力欄の文字が16px未満だと、触れた瞬間に画面を勝手に拡大する。
+   viewportでズーム自体を禁じると指で広げられなくなるので、
+   拡大の口実の方を取り除く（＝16pxを下回らせない） */
+input[type=text],input[type=email],input[type=number],input[type=password],
+input[type=time],textarea,select{
   width:100%;background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
-  padding:13px 14px;font:inherit;color:var(--ink);
+  padding:12px 14px;font:inherit;font-size:16px;color:var(--ink);
 }
-input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--shu);outline-offset:1px}
+input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--ai);outline-offset:1px}
 .row{display:flex;gap:8px}
 
 /* --- 週次レビュー ------------------------------------------- */
 .review{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);padding:18px 16px}
 .review h3{font-size:16px;margin-bottom:10px}
 .review .sum{font-size:13px;color:var(--ink-2);white-space:pre-line;margin:0 0 14px}
-.review .act{border-left:3px solid var(--shu);padding:2px 0 2px 11px;font-size:14px;font-weight:500}
+.review .act{border-left:3px solid var(--ai);padding:2px 0 2px 11px;font-size:14px;font-weight:500}
 
 .authmsg{font-size:13px;margin:10px 2px 0;line-height:1.6}
-.authmsg.err{color:var(--shu)}
+.authmsg.err{color:var(--ai)}
 .authmsg.ok{color:var(--matsuba)}
 .authmsg[hidden]{display:none}
 .boot{color:var(--muted);font-size:13px;padding:26px 2px}
 
 .toast{
   position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:60;
-  background:var(--ink);color:#F4F6F2;padding:11px 18px;border-radius:var(--r);
+  background:var(--ink);color:var(--on-ink);padding:11px 18px;border-radius:var(--r);
   font-size:13px;white-space:nowrap;
 }
 .toast[hidden]{display:none}
-.spin{display:inline-block;width:13px;height:13px;border:2px solid #F4F6F244;
-  border-top-color:#F4F6F2;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid #F1F4F844;
+  border-top-color:var(--on-ink);border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
 @keyframes sp{to{transform:rotate(360deg)}}
 
 @media (prefers-reduced-motion:reduce){
@@ -305,6 +330,26 @@ function today() {
   return new Date(jst.getTime() - 4*3600e3).toISOString().slice(0,10);
 }
 const DAY = today();
+
+/* 食事の区分。表示順はそのまま1日の流れになる */
+const SLOTS = [
+  { key:'breakfast',  label:'朝食' },
+  { key:'lunch',      label:'昼食' },
+  { key:'dinner',     label:'夕食' },
+  { key:'snack',      label:'間食' },
+  { key:'supplement', label:'補食' },
+  { key:'other',      label:'その他' },
+];
+
+/* マイフードからの1タップ記録には推定が挟まらないので、
+   時刻から当たりをつける。外れていてもその場で押し直せる */
+function guessSlot() {
+  const h = Number(new Date(Date.now() + 9*3600e3).toISOString().slice(11,13));
+  if (h >= 4  && h < 10) return 'breakfast';
+  if (h >= 10 && h < 15) return 'lunch';
+  if (h >= 17 && h < 22) return 'dinner';
+  return 'snack';
+}
 
 let state = { user:null, target:null, day:null, foods:[], entries:[], expected:null };
 
@@ -483,7 +528,7 @@ async function refresh() {
   const hour = Number(new Date(Date.now()+9*3600e3).toISOString().slice(11,13));
   const [tg, ent, fd, exp, rv] = await Promise.all([
     sb.rpc('nt_daily_target', { p_user: state.user.id, p_day: DAY }),
-    sb.from('nt_meal_entry').select('id,eaten_at,note,kcal,protein_g,fat_g,carb_g')
+    sb.from('nt_meal_entry').select('id,eaten_at,note,meal_slot,kcal,protein_g,fat_g,carb_g')
       .eq('eaten_on', DAY).order('eaten_at'),
     sb.from('nt_food').select('*').eq('is_archived', false)
       .order('use_count', { ascending:false }).limit(8),
@@ -578,7 +623,7 @@ function renderQuick() {
     const b = el('button','chip');
     b.innerHTML = `${f.emoji ?? '🍽'} ${f.name} <span class="p">P${Math.round(f.protein_g)}</span>`;
     b.onclick = () => openConfirm({
-      dish_name: f.name, meal_slot:'other', note:'', min_confidence:1,
+      dish_name: f.name, meal_slot: guessSlot(), note:'', min_confidence:1,
       items:[toItem(f)]
     }, 'myfood');
     box.append(b);
@@ -603,16 +648,49 @@ function renderLog() {
     box.innerHTML = '<p class="empty">まだ記録がありません。下のボタンから始められます。</p>';
     return;
   }
-  state.entries.forEach(e => {
-    const row = el('button','log-row');
-    const t = new Date(e.eaten_at).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
-    row.innerHTML = `<span class="t num">${t}</span>
-      <span class="n">${e.note ?? '食事'}</span>
-      <span class="v"><b>${Math.round(e.kcal)}</b> kcal<br><span>P${Math.round(e.protein_g)}</span></span>
-      <span class="go" aria-hidden="true">›</span>`;
-    row.setAttribute('aria-label', `${e.note ?? '食事'} を直す`);
-    row.onclick = () => openEdit(e);
-    box.append(row);
+  // 記録順に並べるだけでは「間食がどれだけ積み上がっているか」が見えない。
+  // 区分ごとにまとめ、小計を添えて初めて意味のある比較になる
+  for (const s of SLOTS) {
+    const rows = state.entries.filter(e => (e.meal_slot ?? 'other') === s.key);
+    if (!rows.length) continue;
+
+    const sum = rows.reduce((a, e) => ({
+      kcal: a.kcal + Number(e.kcal), p: a.p + Number(e.protein_g)
+    }), { kcal:0, p:0 });
+
+    const head = el('div','slot-head');
+    head.innerHTML = `<span class="nm">${s.label}</span>
+      <span class="sum">${Math.round(sum.kcal)} kcal　P${Math.round(sum.p)}</span>`;
+    box.append(head);
+
+    rows.forEach(e => box.append(logRow(e)));
+  }
+}
+
+function logRow(e) {
+  const row = el('button','log-row');
+  const t = new Date(e.eaten_at).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
+  row.innerHTML = `<span class="t num">${t}</span>
+    <span class="n">${e.note ?? '食事'}</span>
+    <span class="v"><b>${Math.round(e.kcal)}</b> kcal<br><span>P${Math.round(e.protein_g)}</span></span>
+    <span class="go" aria-hidden="true">›</span>`;
+  row.setAttribute('aria-label', `${e.note ?? '食事'} を直す`);
+  row.onclick = () => openEdit(e);
+  return row;
+}
+
+/* 確認カード・修正画面の両方で使う区分の選択 */
+function drawSlots() {
+  const box = $('#slotSel');
+  if (!box) return;
+  box.innerHTML = '';
+  SLOTS.forEach(s => {
+    const b = el('button');
+    b.type = 'button';
+    b.textContent = s.label;
+    b.setAttribute('aria-pressed', String(draft.meal_slot === s.key));
+    b.onclick = () => { draft.meal_slot = s.key; drawSlots(); };
+    box.append(b);
   });
 }
 
@@ -660,6 +738,7 @@ async function openEdit(entry) {
     draft = {
       entry_id: entry.id,
       dish_name: entry.note ?? '食事',
+      meal_slot: entry.meal_slot ?? 'other',
       items,
       originalIds: items.map(i => i.id),
     };
@@ -669,7 +748,9 @@ async function openEdit(entry) {
         <button data-close style="color:var(--muted);font-size:13px">やめる</button></div>
       <p class="sheet-note">量を選び直すか、いらない品目を × で外してください</p>
       <input type="text" id="editName" placeholder="食事の名前">
-      <div style="height:12px"></div>
+      <div style="height:14px"></div>
+      <p class="slot-label">いつの食事？</p>
+      <div class="slotsel" id="slotSel"></div>
       <div id="items"></div>
       <div class="total" id="total"></div>
       <button class="btn" id="commit" style="width:100%">保存する</button>
@@ -677,6 +758,7 @@ async function openEdit(entry) {
       <button class="danger" id="delEntry">この記録を削除</button>
       <div style="height:6px"></div>`);
     $('#editName').value = draft.dish_name;
+    drawSlots();
     drawItems();
     $('#commit').onclick = commit;
     armDelete();
@@ -808,15 +890,22 @@ async function shrink(file) {
    ============================================================ */
 let draft = null;
 function openConfirm(result, method) {
-  draft = { ...result, method, items: result.items.map(i => ({...i})) };
+  draft = {
+    ...result, method,
+    meal_slot: result.meal_slot ?? guessSlot(),
+    items: result.items.map(i => ({...i})),
+  };
   sheet(`
     <div class="sheet-head"><h2 id="dishName">${draft.dish_name}</h2>
       <button data-close style="color:var(--muted);font-size:13px">やめる</button></div>
     ${draft.note ? `<p class="sheet-note">${draft.note}</p>` : '<div style="height:12px"></div>'}
+    <p class="slot-label">いつの食事？</p>
+    <div class="slotsel" id="slotSel"></div>
     <div id="items"></div>
     <div class="total" id="total"></div>
     <button class="btn" id="commit" style="width:100%">この内容で記録する</button>
     <div style="height:6px"></div>`);
+  drawSlots();
   drawItems();
   $('#commit').onclick = commit;
 }
@@ -923,7 +1012,7 @@ async function commitEdit() {
 
     const name = ($('#editName')?.value ?? '').trim() || '食事';
     const { error: e2 } = await sb.from('nt_meal_entry')
-      .update({ note: name }).eq('id', id);
+      .update({ note: name, meal_slot: draft.meal_slot ?? 'other' }).eq('id', id);
     if (e2) throw e2;
 
     closeSheet(); toast('直しました'); refresh();
