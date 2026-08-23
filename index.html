@@ -1,0 +1,880 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#16211C">
+<title>食事記録</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="食事">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   漆器（うるし）: 濃墨の地に朱と松葉。数字はタブular数字で桁を揃える
+   ============================================================ */
+:root{
+  --bg:#E9EBE6;
+  --paper:#FFFFFF;
+  --ink:#16211C;
+  --ink-2:#3A4642;
+  --muted:#77817A;
+  --line:#D3D8D0;
+  --shu:#C4452D;        /* 朱 — 不足・行動を促す色 */
+  --matsuba:#3A6B57;    /* 松葉 — 達成 */
+  --kin:#B08A3E;        /* 金 — 超過の注意 */
+  --r:4px;
+  --pad:16px;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --sans:"Zen Kaku Gothic New",system-ui,sans-serif;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%}
+body{
+  background:var(--bg);color:var(--ink);font-family:var(--sans);
+  font-size:15px;line-height:1.6;
+  padding-bottom:calc(84px + env(safe-area-inset-bottom));
+}
+.wrap{max-width:480px;margin:0 auto;padding:0 var(--pad)}
+button{font:inherit;color:inherit;border:none;background:none;cursor:pointer}
+h1,h2,h3{margin:0;font-weight:700;letter-spacing:.02em}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+
+/* --- ヘッダ ------------------------------------------------ */
+header{
+  padding:20px var(--pad) 12px;max-width:480px;margin:0 auto;
+  display:flex;align-items:baseline;justify-content:space-between;
+}
+header .today{font-size:19px}
+header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-spacing:.06em}
+
+/* --- 見出しラベル ------------------------------------------ */
+.eyebrow{
+  font-family:var(--mono);font-size:11px;letter-spacing:.14em;
+  color:var(--muted);text-transform:uppercase;margin:24px 0 8px;
+}
+
+/* --- 着地予測バー（このアプリの核）-------------------------- */
+.ledger{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);padding:18px 16px 14px}
+.gauge + .gauge{margin-top:20px;padding-top:20px;border-top:1px solid var(--line)}
+.gauge-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:9px}
+.gauge-head .label{font-size:13px;font-weight:500;color:var(--ink-2)}
+.gauge-head .figs{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.gauge-head .figs b{font-size:21px;font-weight:600;letter-spacing:-.02em}
+.gauge-head .figs span{font-size:12px;color:var(--muted);margin-left:3px}
+
+.track{position:relative;height:10px;background:#E4E7E1;border-radius:2px;overflow:hidden}
+.fill{position:absolute;inset:0 auto 0 0;background:var(--shu);border-radius:2px 0 0 2px;
+      transition:width .45s cubic-bezier(.2,.7,.3,1)}
+.gauge.hit .fill{background:var(--matsuba)}
+.gauge.over .fill{background:var(--kin)}
+/* この先いつも通り食べた場合の着地点をハッチで見せる */
+.ghost{position:absolute;top:0;bottom:0;transition:left .45s,width .45s;
+  background:repeating-linear-gradient(115deg,#C4452D33 0 4px,transparent 4px 8px)}
+.tick{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink);border-radius:1px}
+.gauge .note{margin:7px 0 0;font-size:12px;color:var(--muted)}
+.gauge .note b{font-family:var(--mono);color:var(--ink-2);font-weight:600}
+
+/* --- マイフード（1タップ記録）------------------------------ */
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{
+  background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
+  padding:9px 12px;font-size:13px;display:flex;gap:7px;align-items:center;
+}
+.chip:active{background:#F3F5F1}
+.chip .p{font-family:var(--mono);font-size:11px;color:var(--muted)}
+
+/* --- 記録リスト -------------------------------------------- */
+.log-row{
+  background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
+  padding:12px 14px;display:flex;align-items:center;gap:12px;margin-bottom:8px;
+}
+.log-row .t{font-family:var(--mono);font-size:11px;color:var(--muted);width:38px;flex:none}
+.log-row .n{flex:1;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.log-row .v{font-family:var(--mono);font-size:12px;text-align:right;line-height:1.35}
+.log-row .v b{font-weight:600}
+.log-row .v span{color:var(--muted)}
+.empty{color:var(--muted);font-size:13px;padding:18px 2px}
+
+/* --- 下部の操作 -------------------------------------------- */
+.dock{
+  position:fixed;left:0;right:0;bottom:0;z-index:20;
+  background:linear-gradient(180deg,#E9EBE600,#E9EBE6 22%);
+  padding:16px var(--pad) calc(16px + env(safe-area-inset-bottom));
+}
+.dock-in{max-width:480px;margin:0 auto;display:flex;gap:8px}
+.btn{
+  flex:1;background:var(--ink);color:#F4F6F2;border-radius:var(--r);
+  padding:15px 10px;font-size:14px;font-weight:500;text-align:center;
+}
+.btn:active{transform:translateY(1px)}
+.btn.ghost-btn{flex:none;width:56px;background:var(--paper);color:var(--ink);border:1px solid var(--line)}
+.btn[disabled]{opacity:.45}
+
+/* --- シート（確認カード）----------------------------------- */
+.sheet{
+  position:fixed;inset:0;z-index:40;background:rgba(22,33,28,.45);
+  display:flex;align-items:flex-end;justify-content:center;
+}
+.sheet[hidden]{display:none}
+.sheet-in{
+  background:var(--bg);width:100%;max-width:480px;max-height:92vh;
+  border-radius:10px 10px 0 0;overflow-y:auto;
+  padding:20px var(--pad) calc(20px + env(safe-area-inset-bottom));
+  animation:rise .28s cubic-bezier(.2,.8,.3,1);
+}
+@keyframes rise{from{transform:translateY(18px);opacity:.4}to{transform:none;opacity:1}}
+.sheet-head{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:4px}
+.sheet-head h2{font-size:18px}
+.sheet-note{font-size:12px;color:var(--shu);margin:0 0 16px}
+
+/* --- 品目と量トグル ---------------------------------------- */
+.item{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);padding:13px 14px;margin-bottom:8px}
+.item.low{border-left:3px solid var(--kin)}
+.item-top{display:flex;align-items:center;gap:9px;margin-bottom:11px}
+.item-top .nm{flex:1;font-size:14px;font-weight:500}
+.item-top .rm{color:var(--muted);font-size:18px;padding:0 4px;line-height:1}
+.seg{display:flex;border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.seg button{
+  flex:1;padding:9px 4px;font-size:13px;color:var(--ink-2);
+  border-right:1px solid var(--line);transition:background .15s;
+}
+.seg button:last-child{border-right:none}
+.seg button[aria-pressed="true"]{background:var(--ink);color:#F4F6F2;font-weight:500}
+.item-figs{margin-top:9px;font-family:var(--mono);font-size:12px;color:var(--muted);letter-spacing:.02em}
+.item-figs b{color:var(--ink);font-weight:600}
+
+.total{
+  background:var(--ink);color:#F4F6F2;border-radius:var(--r);
+  padding:14px 16px;display:flex;align-items:baseline;justify-content:space-between;margin:14px 0 10px;
+}
+.total .k{font-family:var(--mono);font-size:24px;font-weight:600;letter-spacing:-.02em}
+.total .k span{font-size:12px;opacity:.65;margin-left:3px}
+.total .p{font-family:var(--mono);font-size:13px;opacity:.8;text-align:right}
+
+/* --- 入力 --------------------------------------------------- */
+input[type=text],input[type=email],input[type=number],textarea{
+  width:100%;background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
+  padding:13px 14px;font:inherit;color:var(--ink);
+}
+input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--shu);outline-offset:1px}
+.row{display:flex;gap:8px}
+
+/* --- 週次レビュー ------------------------------------------- */
+.review{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);padding:18px 16px}
+.review h3{font-size:16px;margin-bottom:10px}
+.review .sum{font-size:13px;color:var(--ink-2);white-space:pre-line;margin:0 0 14px}
+.review .act{border-left:3px solid var(--shu);padding:2px 0 2px 11px;font-size:14px;font-weight:500}
+
+.authmsg{font-size:13px;margin:10px 2px 0;line-height:1.6}
+.authmsg.err{color:var(--shu)}
+.authmsg.ok{color:var(--matsuba)}
+.authmsg[hidden]{display:none}
+.boot{color:var(--muted);font-size:13px;padding:26px 2px}
+
+.toast{
+  position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:60;
+  background:var(--ink);color:#F4F6F2;padding:11px 18px;border-radius:var(--r);
+  font-size:13px;white-space:nowrap;
+}
+.toast[hidden]{display:none}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid #F4F6F244;
+  border-top-color:#F4F6F2;border-radius:50%;animation:sp .7s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+@media (prefers-reduced-motion:reduce){
+  *{animation-duration:.001ms !important;transition-duration:.001ms !important}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1 class="today" id="dateLabel">—</h1>
+  <span class="meta" id="phaseLabel"></span>
+</header>
+
+<div class="wrap" id="app" hidden>
+  <section class="ledger" id="ledger"></section>
+
+  <p class="eyebrow">よく食べるもの</p>
+  <div class="chips" id="quick"></div>
+
+  <p class="eyebrow">今日の記録</p>
+  <div id="log"></div>
+
+  <p class="eyebrow">今週のレビュー</p>
+  <div id="review"></div>
+</div>
+
+<!-- ログイン -->
+<div class="wrap" id="auth" hidden>
+  <p class="eyebrow">はじめに</p>
+  <p style="font-size:14px;color:var(--ink-2)">メールアドレスにログイン用リンクを送ります。</p>
+  <input type="email" id="email" placeholder="you@example.com" autocomplete="email"
+         inputmode="email" enterkeyhint="send">
+  <div style="height:8px"></div>
+  <button class="btn" id="sendLink" style="width:100%">リンクを送る</button>
+  <p class="authmsg" id="authMsg" hidden></p>
+
+  <!-- ホーム画面に追加したアプリはブラウザと別の保管庫を持つため、
+       メールのリンクを踏んでもアプリ側にはログインが伝わらない。
+       パスワードならメールを経由しないので、どこからでも通る -->
+  <div id="pwBox" hidden>
+    <div style="height:14px"></div>
+    <p style="font-size:13px;color:var(--ink-2);margin:0 0 8px">
+      ワークアウトアプリと同じパスワードで入れます。
+    </p>
+    <div class="row">
+      <input type="password" id="pw" autocomplete="current-password"
+             placeholder="パスワード" style="flex:2">
+      <button class="btn" id="goPw" style="flex:1">入る</button>
+    </div>
+  </div>
+
+  <button id="togglePw"
+          style="margin-top:14px;font-size:13px;color:var(--ink-2);text-decoration:underline">
+    パスワードで入る
+  </button>
+
+  <p style="font-size:12px;color:var(--muted);margin-top:16px;line-height:1.7">
+    <b>ホーム画面のアイコンから開いた場合は、パスワードで入ってください。</b>
+    メールのリンクはブラウザ側でしか成立せず、アプリには伝わりません。<br>
+    ブラウザで開いている場合は、リンクでもパスワードでもどちらでも入れます。
+  </p>
+</div>
+
+<nav class="dock" id="dock" hidden>
+  <div class="dock-in">
+    <button class="btn" id="btnPhoto">写真で記録</button>
+    <button class="btn" id="btnText">文字で記録</button>
+    <button class="btn ghost-btn" id="btnWeight" aria-label="体重を記録">体重</button>
+  </div>
+</nav>
+
+<input type="file" id="file" accept="image/*" capture="environment" hidden>
+
+<!-- 確認カード -->
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-in" id="sheetIn"></div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script type="module">
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+
+/* ============================================================
+   設定
+   ============================================================ */
+const SUPABASE_URL  = 'https://zttzdfdpnpzvtkevhjid.supabase.co';
+const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp0dHpkZmRwbnB6dnRrZXZoamlkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0MzQyNTAsImV4cCI6MjA5NzAxMDI1MH0.ry3bhv3hx4uwasYfInbYI0qSX5Vu0m1cXsE6LPh9Lkc';
+
+/* マジックリンクは PKCE で受ける。
+   ・URLに access_token が残らない（履歴やリファラから漏れない）
+   ・detectSessionInUrl が ?code= を自動で交換する
+   storageKey を明示しておくと、同じドメインに他のSupabaseアプリを置いても
+   セッションを踏み合わない */
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON, {
+  auth: {
+    flowType: 'pkce',
+    detectSessionInUrl: false,   // ?code= の交換は init() で自前で行う
+    persistSession: true,
+    autoRefreshToken: true,
+    storageKey: 'nt-auth',
+  },
+});
+
+const $ = s => document.querySelector(s);
+const el = (t, c) => { const e = document.createElement(t); if (c) e.className = c; return e; };
+
+/* 深夜4時締め。DBトリガと同じ規則にしないと集計がズレる */
+function today() {
+  const jst = new Date(Date.now() + 9*3600e3);
+  return new Date(jst.getTime() - 4*3600e3).toISOString().slice(0,10);
+}
+const DAY = today();
+
+let state = { user:null, target:null, day:null, foods:[], entries:[], expected:null };
+
+/* ============================================================
+   起動
+   ============================================================ */
+/* リダイレクト先は「クエリもハッシュも付かない自分自身のURL」に固定する。
+   location.href をそのまま渡すと、直前の ?code= や #error= が混ざったURLが
+   リダイレクト許可リストと一致せず弾かれる（マジックリンクが効かない典型例） */
+const REDIRECT_TO = location.origin + location.pathname;
+
+init();
+async function init() {
+  // メール側で失効・使用済みだった場合はここで拾う
+  if (showAuthErrorFromUrl()) { showAuth(); return; }
+
+  // ?code= の引き換えは自前でやる。detectSessionInUrl に任せると失敗が
+  // コンソールにしか出ず、利用者には「ログイン画面に戻るだけ」に見える
+  const code = new URLSearchParams(location.search).get('code');
+  if (code) {
+    const { error: exErr } = await sb.auth.exchangeCodeForSession(code);
+    cleanUrl();                         // 使い終わった ?code= は履歴から消す
+    if (exErr) {
+      console.error('exchangeCodeForSession failed:', exErr);
+      authMsg(explainExchangeError(exErr), 'err');
+      showAuth();
+      return;
+    }
+  }
+
+  const { data:{ session }, error } = await sb.auth.getSession();
+  if (error) console.error(error);
+  if (!session) { showAuth(); return; }
+
+  cleanUrl();
+  state.user = session.user;
+  $('#auth').hidden = true;
+  $('#authMsg').hidden = true;
+  $('#app').hidden = false;
+  $('#dock').hidden = false;
+  $('#dateLabel').textContent = new Date(DAY).toLocaleDateString('ja-JP',{month:'long',day:'numeric',weekday:'short'});
+  await refresh();
+  flushQueue();
+}
+
+function showAuth() {
+  $('#auth').hidden = false;
+  $('#app').hidden = true;
+  $('#dock').hidden = true;
+}
+
+/* Supabaseはリンクが失効・使用済みだと ?error= か #error= を付けて戻してくる。
+   黙って握りつぶすと「押したのに入れない」だけの状態になるので必ず出す */
+function showAuthErrorFromUrl() {
+  const q = new URLSearchParams(location.search);
+  const h = new URLSearchParams(location.hash.slice(1));
+  const desc = q.get('error_description') ?? h.get('error_description');
+  const code = q.get('error') ?? h.get('error');
+  if (!desc && !code) return false;
+  const expired = /expired|invalid/i.test(desc ?? code ?? '');
+  authMsg(expired ? 'リンクの有効期限が切れています。もう一度送ってください。'
+                  : `ログインできませんでした（${code ?? 'error'}）`, 'err');
+  cleanUrl();
+  return true;
+}
+
+/* 引き換え失敗の原因を、利用者が次に取れる行動の言葉に翻訳する。
+   一番多いのは「申請したのと別のブラウザでリンクを開いた」ケース。
+   PKCEの照合用の値は申請したブラウザにしか残らないため成立しない */
+function explainExchangeError(error) {
+  const m = (error?.message ?? '').toLowerCase();
+  if (m.includes('verifier') || m.includes('challenge')) {
+    return 'リンクを、申請したのとは別のブラウザで開いたようです。'
+         + 'もう一度リンクを送り、この画面と同じブラウザで開いてください。';
+  }
+  if (m.includes('expired') || m.includes('used') || m.includes('invalid')) {
+    return 'リンクの有効期限が切れているか、すでに使用済みです。もう一度送ってください。';
+  }
+  return `ログインできませんでした（${error?.message ?? 'unknown'}）`;
+}
+
+function cleanUrl() {
+  if (location.search || location.hash) history.replaceState({}, '', REDIRECT_TO);
+}
+
+function authMsg(text, kind) {
+  const p = $('#authMsg');
+  p.textContent = text;
+  p.className = 'authmsg ' + (kind ?? '');
+  p.hidden = false;
+}
+
+$('#sendLink').onclick = sendLink;
+$('#email').addEventListener('keydown', e => { if (e.key === 'Enter') sendLink(); });
+
+let sending = false;
+async function sendLink() {
+  if (sending) return;
+  const email = $('#email').value.trim();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    authMsg('メールアドレスの形式を確認してください', 'err');
+    return;
+  }
+  sending = true;
+  const btn = $('#sendLink');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span> 送信中';
+  const { error } = await sb.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: REDIRECT_TO, shouldCreateUser: true },
+  });
+  btn.disabled = false;
+  btn.textContent = 'リンクを送る';
+  sending = false;
+  if (error) {
+    console.error(error);
+    authMsg(/rate|seconds/i.test(error.message)
+      ? '送信の間隔が短すぎます。1分ほど待ってからもう一度お試しください。'
+      : `送信できませんでした（${error.message}）`, 'err');
+  } else {
+    remember(email);
+    authMsg(`${email} にリンクを送りました。メールを確認してください。`, 'ok');
+  }
+}
+
+/* --- パスワードで入る -----------------------------------------
+   ホーム画面に追加したアプリはブラウザと別の保管庫を使うため、
+   メールのリンクを踏んでもアプリ側のログインにはならない。
+   パスワードはメールを経由しないので、その制約を受けない。
+   （無料プランではメール本文を編集できず、6桁コードを載せられないため
+     こちらを逃げ道にしている） */
+let lastEmail = '';
+try { lastEmail = localStorage.getItem('nt-last-email') ?? ''; } catch {}
+if (lastEmail) $('#email').value = lastEmail;
+
+function remember(email) {
+  lastEmail = email;
+  try { localStorage.setItem('nt-last-email', email); } catch {}
+}
+
+$('#togglePw').onclick = () => {
+  $('#pwBox').hidden = false;
+  $('#togglePw').hidden = true;
+  $('#pw').focus();
+};
+
+$('#goPw').onclick = signInPw;
+$('#pw').addEventListener('keydown', e => { if (e.key === 'Enter') signInPw(); });
+
+async function signInPw() {
+  const email = $('#email').value.trim() || lastEmail;
+  const password = $('#pw').value;
+  if (!email)    { authMsg('メールアドレスを入れてください', 'err'); return; }
+  if (!password) { authMsg('パスワードを入れてください', 'err'); return; }
+
+  const btn = $('#goPw');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>';
+  const { error } = await sb.auth.signInWithPassword({ email, password });
+  btn.disabled = false;
+  btn.textContent = '入る';
+
+  if (error) {
+    console.error('signInWithPassword failed:', error);
+    authMsg(/invalid login credentials/i.test(error.message)
+      ? 'メールアドレスかパスワードが違います。'
+      : `ログインできませんでした（${error.message}）`, 'err');
+    return;
+  }
+  $('#pw').value = '';
+  remember(email);
+  init();
+}
+
+async function refresh() {
+  const hour = Number(new Date(Date.now()+9*3600e3).toISOString().slice(11,13));
+  const [tg, ent, fd, exp, rv] = await Promise.all([
+    sb.rpc('nt_daily_target', { p_user: state.user.id, p_day: DAY }),
+    sb.from('nt_meal_entry').select('id,eaten_at,note,kcal,protein_g,fat_g,carb_g')
+      .eq('eaten_on', DAY).order('eaten_at'),
+    sb.from('nt_food').select('*').eq('is_archived', false)
+      .order('use_count', { ascending:false }).limit(8),
+    sb.rpc('nt_expected_rest_of_day', { p_user: state.user.id, p_day: DAY, p_hour: hour }),
+    sb.from('nt_weekly_report').select('*').order('week_end',{ascending:false}).limit(1)
+  ]);
+  state.target   = tg.data?.[0] ?? null;
+  state.entries  = ent.data ?? [];
+  state.foods    = fd.data ?? [];
+  state.expected = exp.data?.[0] ?? { kcal:0, protein_g:0, basis_days:0 };
+  renderLedger();
+  renderQuick();
+  renderLog();
+  renderReview(rv.data?.[0]);
+  if (state.target) {
+    $('#phaseLabel').textContent = state.target.is_training ? 'トレ日' : 'オフ日';
+  }
+}
+
+/* ============================================================
+   着地予測バー
+   ============================================================ */
+function renderLedger() {
+  const box = $('#ledger'); box.innerHTML = '';
+  if (!state.target) {
+    box.innerHTML = '<p class="empty">プロフィールと体重を登録すると目標が出ます。</p>';
+    return;
+  }
+  const sum = state.entries.reduce((a,e)=>({
+    kcal:a.kcal+Number(e.kcal), protein:a.protein+Number(e.protein_g)
+  }),{kcal:0,protein:0});
+
+  const reliable = (state.expected.basis_days ?? 0) >= 5;
+  box.append(
+    gauge('タンパク質','g', sum.protein, state.target.target_protein_g,
+          reliable ? Number(state.expected.protein_g) : 0, true),
+    gauge('カロリー','kcal', sum.kcal, state.target.target_kcal,
+          reliable ? Number(state.expected.kcal) : 0, false)
+  );
+}
+
+function gauge(label, unit, eaten, target, expect, daily) {
+  const g = el('div','gauge');
+  const proj = eaten + expect;
+  const pctE = Math.min(eaten/target*100, 118);
+  const pctP = Math.min(proj /target*100, 118);
+  // 目盛りは常に「目標＝バーの85%位置」。超過分が視覚的に見切れない
+  const scale = 0.85;
+  const hit  = proj >= target*0.95;
+  const over = proj >  target*1.12;
+  if (hit && !over) g.classList.add('hit');
+  if (over) g.classList.add('over');
+
+  const head = el('div','gauge-head');
+  head.innerHTML = `<span class="label">${label}</span>
+    <span class="figs"><b>${Math.round(eaten)}</b><span>/ ${Math.round(target)} ${unit}</span></span>`;
+
+  const track = el('div','track');
+  const fill  = el('div','fill');
+  fill.style.width = (pctE*scale) + '%';
+  const ghost = el('div','ghost');
+  ghost.style.left  = (pctE*scale) + '%';
+  ghost.style.width = Math.max(0,(pctP-pctE)*scale) + '%';
+  const tick = el('div','tick');
+  tick.style.left = (100*scale) + '%';
+  track.append(fill, ghost, tick);
+
+  const note = el('p','note');
+  if (expect > 0) {
+    const gap = Math.round(target - proj);
+    note.innerHTML = gap > 8
+      ? `いつも通りでも <b>${gap}${unit}</b> 足りません`
+      : gap < -(target*0.12) ? `いつも通りだと <b>${-gap}${unit}</b> 超えます`
+      : `このまま食べれば <b>${Math.round(proj)}${unit}</b> で着地します`;
+  } else if (daily) {
+    note.textContent = '記録が2週間たまると着地予測が出ます';
+  }
+  g.append(head, track, note);
+  return g;
+}
+
+/* ============================================================
+   マイフード / 記録リスト / レビュー
+   ============================================================ */
+function renderQuick() {
+  const box = $('#quick'); box.innerHTML = '';
+  if (!state.foods.length) {
+    box.innerHTML = '<p class="empty">記録を確定すると、ここに並んで1タップで再利用できます。</p>';
+    return;
+  }
+  state.foods.forEach(f => {
+    const b = el('button','chip');
+    b.innerHTML = `${f.emoji ?? '🍽'} ${f.name} <span class="p">P${Math.round(f.protein_g)}</span>`;
+    b.onclick = () => openConfirm({
+      dish_name: f.name, meal_slot:'other', note:'', min_confidence:1,
+      items:[toItem(f)]
+    }, 'myfood');
+    box.append(b);
+  });
+}
+
+function toItem(f) {
+  const options = f.options ?? [{label:'普通',factor:1}];
+  const i = Math.min(f.default_option ?? 0, options.length-1);
+  const per = { kcal:+f.kcal, protein_g:+f.protein_g, fat_g:+f.fat_g, carb_g:+f.carb_g };
+  return { name:f.name, emoji:f.emoji, matched_food_id:f.id, per_unit:per,
+           options, default_option:i, selected:scale(per, options[i].factor), confidence:1 };
+}
+const scale = (m,f) => ({
+  kcal:r1(m.kcal*f), protein_g:r1(m.protein_g*f), fat_g:r1(m.fat_g*f), carb_g:r1(m.carb_g*f)
+});
+const r1 = n => Math.round(n*10)/10;
+
+function renderLog() {
+  const box = $('#log'); box.innerHTML = '';
+  if (!state.entries.length) {
+    box.innerHTML = '<p class="empty">まだ記録がありません。下のボタンから始められます。</p>';
+    return;
+  }
+  state.entries.forEach(e => {
+    const row = el('div','log-row');
+    const t = new Date(e.eaten_at).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
+    row.innerHTML = `<span class="t num">${t}</span>
+      <span class="n">${e.note ?? '食事'}</span>
+      <span class="v"><b>${Math.round(e.kcal)}</b> kcal<br><span>P${Math.round(e.protein_g)}</span></span>`;
+    box.append(row);
+  });
+}
+
+function renderReview(r) {
+  const box = $('#review');
+  if (!r) { box.innerHTML = '<p class="empty">日曜の夜に、その週のレビューが届きます。</p>'; return; }
+  box.innerHTML = `<div class="review">
+    <h3>${r.headline ?? ''}</h3>
+    <p class="sum">${r.summary ?? ''}</p>
+    <div class="act">${r.action ?? ''}</div>
+  </div>`;
+}
+
+/* ============================================================
+   写真・テキスト入力
+   ============================================================ */
+$('#btnPhoto').onclick = () => $('#file').click();
+$('#file').onchange = async e => {
+  const f = e.target.files?.[0]; if (!f) return;
+  e.target.value = '';
+  busy('写真を読んでいます');
+  try {
+    const b64 = await shrink(f);
+    const { data, error } = await sb.functions.invoke('analyze-meal',
+      { body:{ mode:'photo', image_base64:b64, media_type:'image/jpeg',
+               local_time:new Date().toISOString() }});
+    if (error || data?.error) throw error ?? new Error(data.error);
+    openConfirm(data, 'photo');
+  } catch(err) {
+    console.error(err); toast('推定できませんでした。文字で記録できます');
+  } finally { done(); }
+};
+
+$('#btnText').onclick = () => {
+  sheet(`<div class="sheet-head"><h2>食べたものを書く</h2></div>
+    <p class="sheet-note">「鮭定食とプロテイン1杯」のように、普段の言い方で構いません</p>
+    <input type="text" id="freeText" placeholder="例）鮭定食とプロテイン1杯">
+    <div style="height:10px"></div>
+    <div class="row">
+      <button class="btn ghost-btn" style="flex:1" data-close>やめる</button>
+      <button class="btn" style="flex:2" id="goText">推定する</button>
+    </div>`);
+  setTimeout(()=>$('#freeText').focus(), 60);
+  $('#goText').onclick = async () => {
+    const text = $('#freeText').value.trim(); if (!text) return;
+    busy('推定しています');
+    try {
+      const { data, error } = await sb.functions.invoke('analyze-meal',
+        { body:{ mode:'text', text, local_time:new Date().toISOString() }});
+      if (error || data?.error) throw error ?? new Error(data.error);
+      openConfirm(data, 'text');
+    } catch(err) { console.error(err); toast('推定できませんでした'); }
+    finally { done(); }
+  };
+};
+
+$('#btnWeight').onclick = () => {
+  sheet(`<div class="sheet-head"><h2>体重</h2></div>
+    <p class="sheet-note">起床後・排尿後が最も安定します</p>
+    <input type="number" id="wkg" inputmode="decimal" step="0.1" placeholder="55.4">
+    <div style="height:10px"></div>
+    <div class="row">
+      <button class="btn ghost-btn" style="flex:1" data-close>やめる</button>
+      <button class="btn" style="flex:2" id="goW">記録する</button>
+    </div>`);
+  $('#goW').onclick = async () => {
+    const w = parseFloat($('#wkg').value); if (!w) return;
+    await sb.from('nt_weight_log').upsert(
+      { user_id:state.user.id, logged_on:DAY, weight_kg:w }, { onConflict:'user_id,logged_on' });
+    closeSheet(); toast('記録しました'); refresh();
+  };
+};
+
+/* 長辺1024px / q0.7。通信量と推定精度のちょうどいい交点 */
+async function shrink(file) {
+  const img = await createImageBitmap(file);
+  const s = Math.min(1, 1024 / Math.max(img.width, img.height));
+  const c = new OffscreenCanvas(Math.round(img.width*s), Math.round(img.height*s));
+  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+  const blob = await c.convertToBlob({ type:'image/jpeg', quality:0.7 });
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let s2 = ''; buf.forEach(b => s2 += String.fromCharCode(b));
+  return btoa(s2);
+}
+
+/* ============================================================
+   確認カード ── 触るのは訂正したい1箇所だけ
+   ============================================================ */
+let draft = null;
+function openConfirm(result, method) {
+  draft = { ...result, method, items: result.items.map(i => ({...i})) };
+  sheet(`
+    <div class="sheet-head"><h2 id="dishName">${draft.dish_name}</h2>
+      <button data-close style="color:var(--muted);font-size:13px">やめる</button></div>
+    ${draft.note ? `<p class="sheet-note">${draft.note}</p>` : '<div style="height:12px"></div>'}
+    <div id="items"></div>
+    <div class="total" id="total"></div>
+    <button class="btn" id="commit" style="width:100%">この内容で記録する</button>
+    <div style="height:6px"></div>`);
+  drawItems();
+  $('#commit').onclick = commit;
+}
+
+function drawItems() {
+  const box = $('#items'); box.innerHTML = '';
+  draft.items.forEach((it, idx) => {
+    const d = el('div','item' + (it.confidence < 0.6 ? ' low' : ''));
+    const top = el('div','item-top');
+    top.innerHTML = `<span>${it.emoji ?? '🍽'}</span><span class="nm">${it.name}</span>`;
+    const rm = el('button','rm'); rm.textContent = '×';
+    rm.setAttribute('aria-label', `${it.name}を外す`);
+    rm.onclick = () => { draft.items.splice(idx,1); drawItems(); };
+    top.append(rm);
+
+    const seg = el('div','seg');
+    it.options.forEach((o, oi) => {
+      const b = el('button');
+      b.textContent = o.label;
+      b.setAttribute('aria-pressed', String(oi === it.default_option));
+      b.onclick = () => {
+        it.default_option = oi;
+        it.selected = scale(it.per_unit, o.factor);
+        drawItems();
+      };
+      seg.append(b);
+    });
+
+    const figs = el('div','item-figs');
+    const s = it.selected;
+    figs.innerHTML = `<b>${Math.round(s.kcal)}</b> kcal　P<b>${s.protein_g}</b>　F${s.fat_g}　C${s.carb_g}`;
+    d.append(top, seg, figs);
+    box.append(d);
+  });
+  drawTotal();
+}
+
+function drawTotal() {
+  const t = draft.items.reduce((a,i)=>({
+    kcal:a.kcal+i.selected.kcal, protein_g:a.protein_g+i.selected.protein_g,
+    fat_g:a.fat_g+i.selected.fat_g, carb_g:a.carb_g+i.selected.carb_g
+  }),{kcal:0,protein_g:0,fat_g:0,carb_g:0});
+  draft.total = t;
+  $('#total').innerHTML = `<span class="k">${Math.round(t.kcal)}<span>kcal</span></span>
+    <span class="p">P ${r1(t.protein_g)}　F ${r1(t.fat_g)}　C ${r1(t.carb_g)}</span>`;
+}
+
+/* ============================================================
+   確定 ── ここで初めてDBに入る
+   ============================================================ */
+async function commit() {
+  if (!draft.items.length) { closeSheet(); return; }
+  $('#commit').disabled = true;
+  const payload = {
+    eaten_at: new Date().toISOString(),
+    meal_slot: draft.meal_slot ?? 'other',
+    input_method: draft.method === 'myfood' ? 'myfood' : draft.method,
+    note: draft.dish_name,
+    items: draft.items
+  };
+  try {
+    await save(payload);
+    closeSheet(); toast('記録しました'); refresh();
+  } catch (err) {
+    console.error(err);
+    queue(payload);                       // 圏外でも記録を落とさない
+    closeSheet(); toast('オフラインのため後で送ります');
+  }
+}
+
+async function save(p) {
+  const { data:entry, error } = await sb.from('nt_meal_entry')
+    .insert({ user_id:state.user.id, eaten_at:p.eaten_at, meal_slot:p.meal_slot,
+              input_method:p.input_method, note:p.note }).select('id').single();
+  if (error) throw error;
+
+  const rows = [];
+  for (const [i, it] of p.items.entries()) {
+    const foodId = it.matched_food_id ?? await promote(it);
+    rows.push({
+      entry_id: entry.id, food_id: foodId, name: it.name, emoji: it.emoji,
+      option_label: it.options[it.default_option].label,
+      factor: it.options[it.default_option].factor,
+      ...it.selected, confidence: it.confidence, position: i
+    });
+  }
+  const { error: e2 } = await sb.from('nt_meal_item').insert(rows);
+  if (e2) throw e2;
+}
+
+/* 確定した品目はマイフードに昇格させる。
+   次回から推定を挟まず1タップで記録でき、数値もブレない */
+async function promote(it) {
+  const { data:hit } = await sb.from('nt_food').select('id')
+    .eq('name', it.name).eq('is_archived', false).maybeSingle();
+  if (hit) return hit.id;
+  const { data:made } = await sb.from('nt_food').insert({
+    user_id: state.user.id, name: it.name, emoji: it.emoji,
+    kcal: it.per_unit.kcal, protein_g: it.per_unit.protein_g,
+    fat_g: it.per_unit.fat_g, carb_g: it.per_unit.carb_g,
+    options: it.options, default_option: it.default_option,
+    source: draft.method === 'photo' ? 'ai_photo' : 'ai_text'
+  }).select('id').single();
+  return made?.id ?? null;
+}
+
+/* --- オフラインキュー --------------------------------------- */
+const QK = 'nt_queue';
+const queue = p => {
+  const q = JSON.parse(localStorage.getItem(QK) ?? '[]');
+  q.push(p); localStorage.setItem(QK, JSON.stringify(q));
+};
+async function flushQueue() {
+  const q = JSON.parse(localStorage.getItem(QK) ?? '[]');
+  if (!q.length) return;
+  const rest = [];
+  for (const p of q) { try { await save(p); } catch { rest.push(p); } }
+  localStorage.setItem(QK, JSON.stringify(rest));
+  if (rest.length < q.length) { toast(`${q.length-rest.length}件を送信しました`); refresh(); }
+}
+addEventListener('online', flushQueue);
+
+/* ============================================================
+   シートとトースト
+   ============================================================ */
+function sheet(html) {
+  $('#sheetIn').innerHTML = html;
+  $('#sheet').hidden = false;
+  $('#sheetIn').querySelectorAll('[data-close]').forEach(b => b.onclick = closeSheet);
+}
+function closeSheet(){ $('#sheet').hidden = true; draft = null; }
+$('#sheet').onclick = e => { if (e.target.id === 'sheet') closeSheet(); };
+addEventListener('keydown', e => { if (e.key === 'Escape') closeSheet(); });
+
+let toastTimer;
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(()=>t.hidden = true, 2600);
+}
+function busy(msg){ const t=$('#toast'); t.innerHTML=`<span class="spin"></span> ${msg}`; t.hidden=false; }
+function done(){ $('#toast').hidden = true; }
+
+/* 別タブでのログイン、リフレッシュ失敗、サインアウトを拾う。
+   init() は getSession() 側で完結するので、ここは「状態が変わった時だけ」動かす */
+/* ============================================================
+   Service Worker
+   ============================================================ */
+if ('serviceWorker' in navigator) {
+  addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js', { scope: './' })
+      .catch(err => console.warn('sw register failed', err));
+  });
+
+  // 新しい版が有効になったら1度だけ読み直す。
+  // フラグを立てないと、更新のたびに再読込が連鎖する
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloaded) return;
+    reloaded = true;
+    location.reload();
+  });
+}
+
+sb.auth.onAuthStateChange((event, session) => {
+  if (event === 'SIGNED_IN' && !state.user) { init(); return; }
+  if (event === 'SIGNED_OUT') {
+    state.user = null;
+    showAuth();
+    authMsg('ログアウトしました', '');
+  }
+});
+</script>
+</body>
+</html>
