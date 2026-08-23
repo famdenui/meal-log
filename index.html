@@ -125,6 +125,16 @@ header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-sp
 .slotsel button[aria-pressed="true"]{
   background:var(--ink);color:var(--on-ink);border-color:var(--ink);font-weight:500}
 .slot-label{font-size:12px;color:var(--muted);margin:0 0 7px}
+
+/* --- 通知 --------------------------------------------------- */
+.notify{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
+  padding:14px 16px;display:flex;align-items:center;gap:12px}
+.notify .txt{flex:1;font-size:13px;color:var(--ink-2);line-height:1.55}
+.notify .txt small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.notify button{flex:none;background:var(--ink);color:var(--on-ink);border-radius:var(--r);
+  padding:10px 14px;font-size:13px;font-weight:500}
+.notify button[disabled]{opacity:.45}
+.notify.on .txt{color:var(--matsuba);font-weight:500}
 .danger{width:100%;padding:13px;font-size:13px;color:var(--danger);text-align:center}
 .danger.armed{background:var(--danger);color:var(--on-ink);border-radius:var(--r);font-weight:500}
 
@@ -241,6 +251,11 @@ input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--ai);outl
 
   <p class="eyebrow">今週のレビュー</p>
   <div id="review"></div>
+
+  <div id="notifyWrap" hidden>
+    <p class="eyebrow">通知</p>
+    <div class="notify" id="notify"></div>
+  </div>
 </div>
 
 <!-- ログイン -->
@@ -543,6 +558,7 @@ async function refresh() {
   renderQuick();
   renderLog();
   renderReview(rv.data?.[0]);
+  renderNotify().catch(err => console.warn('notify ui', err));
   if (state.target) {
     $('#phaseLabel').textContent = state.target.is_training ? 'トレ日' : 'オフ日';
   }
@@ -1097,6 +1113,117 @@ function done(){ $('#toast').hidden = true; }
 
 /* 別タブでのログイン、リフレッシュ失敗、サインアウトを拾う。
    init() は getSession() 側で完結するので、ここは「状態が変わった時だけ」動かす */
+/* ============================================================
+   プッシュ通知
+   ------------------------------------------------------------
+   16時に「このままだと何が足りないか」を1通だけ送る。
+   夕食が18時なので、まだ献立を変えられる時刻に届かせる。
+   順調な日は送らない（毎日鳴る通知は1週間で無視される）
+   ============================================================ */
+const VAPID_PUBLIC_KEY = 'BEnFFyO0zGjsbcsnwCulOJtnVLW4EpO3rOMhj6QvHrvfmH-kK2iorabPXiHJK9kSGLPxY23MnM7ZicMHfeciJts';
+
+function pushSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+const isStandalone = () =>
+  matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent);
+
+async function renderNotify() {
+  const wrap = $('#notifyWrap'), box = $('#notify');
+  if (!pushSupported()) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+  box.className = 'notify';
+
+  // iOSはホーム画面に追加したアプリでないと通知を許可できない
+  if (isIOS() && !isStandalone()) {
+    box.innerHTML = `<div class="txt">ホーム画面に追加すると、通知を受け取れます
+      <small>共有ボタン →「ホーム画面に追加」</small></div>`;
+    return;
+  }
+
+  const reg = await navigator.serviceWorker.getRegistration();
+  const sub = await reg?.pushManager.getSubscription();
+
+  if (sub && Notification.permission === 'granted') {
+    const { data } = await sb.from('nt_push_subscription')
+      .select('notify_hour').eq('endpoint', sub.endpoint).maybeSingle();
+    box.className = 'notify on';
+    box.innerHTML = `<div class="txt">通知は有効です
+      <small>${data?.notify_hour ?? 16}時に、足りない分だけお知らせします</small></div>`;
+    const off = el('button'); off.textContent = '止める';
+    off.style.cssText = 'background:var(--paper);color:var(--ink-2);border:1px solid var(--line)';
+    off.onclick = () => disablePush(sub);
+    box.append(off);
+    return;
+  }
+
+  if (Notification.permission === 'denied') {
+    box.innerHTML = `<div class="txt">通知がブロックされています
+      <small>端末の設定でこのアプリの通知を許可してください</small></div>`;
+    return;
+  }
+
+  box.innerHTML = `<div class="txt">16時に、足りない分だけお知らせします
+    <small>順調な日は通知しません</small></div>`;
+  const on = el('button'); on.textContent = '有効にする';
+  on.onclick = () => enablePush(on);
+  box.append(on);
+}
+
+async function enablePush(btn) {
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>';
+  try {
+    // 権限の確認は必ずボタン押下の直後に出す。
+    // 起動直後に出すと拒否率が跳ね上がり、二度と聞けなくなる
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') throw new Error('通知が許可されませんでした');
+
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlB64ToU8(VAPID_PUBLIC_KEY),
+    });
+    const j = sub.toJSON();
+
+    // user_id を入れないとRLSのwith_checkで弾かれる
+    const { error } = await sb.from('nt_push_subscription').upsert({
+      user_id: state.user.id,
+      endpoint: j.endpoint,
+      p256dh: j.keys.p256dh,
+      auth: j.keys.auth,
+      notify_hour: 16,
+      enabled: true,
+      failed_count: 0,
+    }, { onConflict: 'endpoint' });
+    if (error) throw error;
+
+    toast('通知を有効にしました');
+  } catch (err) {
+    console.error(err);
+    toast(err.message ?? '有効にできませんでした');
+  } finally {
+    renderNotify();
+  }
+}
+
+async function disablePush(sub) {
+  try {
+    await sb.from('nt_push_subscription').update({ enabled: false })
+      .eq('endpoint', sub.endpoint);
+    await sub.unsubscribe();
+    toast('通知を止めました');
+  } catch (err) { console.error(err); toast('止められませんでした'); }
+  renderNotify();
+}
+
+function urlB64ToU8(s) {
+  const pad = '='.repeat((4 - s.length % 4) % 4);
+  const raw = atob((s + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
 /* ============================================================
    Service Worker
    ============================================================ */
