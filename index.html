@@ -1137,7 +1137,8 @@ const isIOS = () => /iPad|iPhone|iPod/.test(navigator.userAgent);
 
 async function renderNotify() {
   const wrap = $('#notifyWrap'), box = $('#notify');
-  if (!pushSupported()) { wrap.hidden = true; return; }
+  // 欄は常に出す。「出ない理由」こそ知りたい情報なので、
+  // 非対応でも黙って消さずに何が足りないかを書く
   wrap.hidden = false;
   box.className = 'notify';
 
@@ -1149,10 +1150,26 @@ async function renderNotify() {
   };
 
   try {
-    // iOSはホーム画面に追加したアプリでないと通知を許可できない
+    // iOSはホーム画面に追加したアプリでないと PushManager 自体が存在しない。
+    // 対応判定より先にここを通さないと、案内が必要な場面で欄ごと消える
     if (isIOS() && !isStandalone()) {
       state_('ホーム画面のアイコンから開くと、通知を有効にできます',
-             'Safariのままでは iOS が許可を出せません。共有ボタン →「ホーム画面に追加」');
+             'Safariのままでは iOS が通知を許可できません。'
+           + '共有ボタン →「ホーム画面に追加」→ そのアイコンから開く');
+      return;
+    }
+
+    if (!pushSupported()) {
+      // 何が無いかを出す。iOS 16.4 未満だと標準アプリでも PushManager が無い
+      const miss = [
+        !('serviceWorker' in navigator) && 'ServiceWorker',
+        !('PushManager' in window)      && 'PushManager',
+        !('Notification' in window)     && 'Notification',
+      ].filter(Boolean).join(' / ');
+      state_('この環境では通知を使えません',
+             isIOS()
+               ? `iOS 16.4 以降のホーム画面アプリが必要です（未対応: ${miss}）`
+               : `未対応: ${miss}`);
       return;
     }
 
@@ -1189,7 +1206,8 @@ async function renderNotify() {
       return;
     }
 
-    state_('16時に、足りない分だけお知らせします', '順調な日は通知しません');
+    state_('16時に、足りない分だけお知らせします',
+           pushHint || '順調な日は通知しません');
     const on = el('button'); on.textContent = '有効にする';
     on.onclick = () => enablePush(on);
     box.append(on);
@@ -1229,12 +1247,23 @@ async function enablePush(btn) {
 
     toast('通知を有効にしました');
   } catch (err) {
-    console.error(err);
-    toast(err.message ?? '有効にできませんでした');
+    console.error('enablePush', err);
+    const m = String(err?.message ?? err);
+    // ブラウザ自身が配信サービスに繋がらない場合。こちら側では直せない
+    toast(/daemon|AbortError|push service|registration failed/i.test(m)
+      ? 'ブラウザが配信サービスに接続できませんでした'
+      : (err?.message ?? '有効にできませんでした'));
+    if (/daemon|AbortError|push service|registration failed/i.test(m)) {
+      pushHint = 'このブラウザから配信サービスに接続できませんでした。'
+               + 'iPhoneのホーム画面アプリから試すと通ることがあります。';
+    }
   } finally {
     renderNotify();
   }
 }
+
+/* 直前の失敗理由を1回だけ画面に残す */
+let pushHint = '';
 
 async function disablePush(sub) {
   try {
