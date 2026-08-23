@@ -4,13 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#16211C">
-<title>食事記録</title>
+<title>Meal-log</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon-192.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="食事">
+<meta name="apple-mobile-web-app-title" content="Meal-log">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -100,7 +100,12 @@ header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-sp
 .log-row .v{font-family:var(--mono);font-size:12px;text-align:right;line-height:1.35}
 .log-row .v b{font-weight:600}
 .log-row .v span{color:var(--muted)}
+.log-row{width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer}
+.log-row:active{background:#F3F5F1}
+.log-row .go{color:var(--muted);font-size:15px;flex:none;line-height:1}
 .empty{color:var(--muted);font-size:13px;padding:18px 2px}
+.danger{width:100%;padding:13px;font-size:13px;color:var(--shu);text-align:center}
+.danger.armed{background:var(--shu);color:#F4F6F2;border-radius:var(--r);font-weight:500}
 
 /* --- 下部の操作 -------------------------------------------- */
 .dock{
@@ -599,13 +604,121 @@ function renderLog() {
     return;
   }
   state.entries.forEach(e => {
-    const row = el('div','log-row');
+    const row = el('button','log-row');
     const t = new Date(e.eaten_at).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
     row.innerHTML = `<span class="t num">${t}</span>
       <span class="n">${e.note ?? '食事'}</span>
-      <span class="v"><b>${Math.round(e.kcal)}</b> kcal<br><span>P${Math.round(e.protein_g)}</span></span>`;
+      <span class="v"><b>${Math.round(e.kcal)}</b> kcal<br><span>P${Math.round(e.protein_g)}</span></span>
+      <span class="go" aria-hidden="true">›</span>`;
+    row.setAttribute('aria-label', `${e.note ?? '食事'} を直す`);
+    row.onclick = () => openEdit(e);
     box.append(row);
   });
+}
+
+/* ============================================================
+   記録を直す
+   ------------------------------------------------------------
+   nt_meal_item には「1単位あたり」の値を持っていない。倍率と
+   確定後の値だけがあるので、per_unit は割り戻して復元する。
+   選択肢はマイフード側にあれば使い、無ければ既定の3段階を出す。
+   ============================================================ */
+async function openEdit(entry) {
+  busy('読み込んでいます');
+  try {
+    const { data: rows, error } = await sb.from('nt_meal_item')
+      .select('*').eq('entry_id', entry.id).order('position');
+    if (error) throw error;
+
+    const ids = [...new Set((rows ?? []).map(r => r.food_id).filter(Boolean))];
+    let foods = [];
+    if (ids.length) {
+      const { data } = await sb.from('nt_food').select('id,options').in('id', ids);
+      foods = data ?? [];
+    }
+
+    const items = (rows ?? []).map(r => {
+      const f = Number(r.factor) || 1;
+      const per = {
+        kcal: r1(Number(r.kcal) / f),
+        protein_g: r1(Number(r.protein_g) / f),
+        fat_g: r1(Number(r.fat_g) / f),
+        carb_g: r1(Number(r.carb_g) / f),
+      };
+      const options = optionsFor(r, foods.find(x => x.id === r.food_id));
+      const idx = Math.max(0, options.findIndex(o => Math.abs(Number(o.factor) - f) < 1e-6));
+      return {
+        id: r.id, name: r.name, emoji: r.emoji,
+        per_unit: per, options, default_option: idx,
+        selected: scale(per, options[idx].factor),
+        confidence: Number(r.confidence ?? 1),
+      };
+    });
+
+    if (!items.length) { toast('明細がありません'); return; }
+
+    draft = {
+      entry_id: entry.id,
+      dish_name: entry.note ?? '食事',
+      items,
+      originalIds: items.map(i => i.id),
+    };
+
+    sheet(`
+      <div class="sheet-head"><h2>記録を直す</h2>
+        <button data-close style="color:var(--muted);font-size:13px">やめる</button></div>
+      <p class="sheet-note">量を選び直すか、いらない品目を × で外してください</p>
+      <input type="text" id="editName" placeholder="食事の名前">
+      <div style="height:12px"></div>
+      <div id="items"></div>
+      <div class="total" id="total"></div>
+      <button class="btn" id="commit" style="width:100%">保存する</button>
+      <div style="height:10px"></div>
+      <button class="danger" id="delEntry">この記録を削除</button>
+      <div style="height:6px"></div>`);
+    $('#editName').value = draft.dish_name;
+    drawItems();
+    $('#commit').onclick = commit;
+    armDelete();
+  } catch (err) {
+    console.error(err);
+    toast('開けませんでした');
+  } finally { done(); }
+}
+
+function optionsFor(row, food) {
+  let opts = Array.isArray(food?.options) && food.options.length >= 2
+    ? food.options.map(o => ({ label: String(o.label), factor: Number(o.factor) }))
+    : [{ label:'少なめ', factor:0.7 }, { label:'普通', factor:1 }, { label:'大盛', factor:1.5 }];
+  // 記録時の倍率が選択肢に無ければ足す。勝手に別の量へ寄せないため
+  const f = Number(row.factor) || 1;
+  if (!opts.some(o => Math.abs(o.factor - f) < 1e-6)) {
+    opts.push({ label: row.option_label || `×${f}`, factor: f });
+  }
+  return opts.sort((a, b) => a.factor - b.factor);
+}
+
+/* 削除は2段階。1回目で確認、2回目で実行 */
+function armDelete() {
+  const b = $('#delEntry');
+  let armed = false;
+  b.onclick = async () => {
+    if (!armed) {
+      armed = true;
+      b.textContent = 'もう一度押すと削除します';
+      b.classList.add('armed');
+      setTimeout(() => {
+        if (!armed) return;
+        armed = false; b.textContent = 'この記録を削除'; b.classList.remove('armed');
+      }, 4000);
+      return;
+    }
+    const id = draft.entry_id;
+    b.disabled = true;
+    const { error } = await sb.from('nt_meal_entry').delete().eq('id', id);
+    if (error) { console.error(error); b.disabled = false; toast('削除できませんでした'); return; }
+    closeSheet(); toast('削除しました'); refresh();
+  };
 }
 
 function renderReview(r) {
@@ -755,6 +868,7 @@ function drawTotal() {
    確定 ── ここで初めてDBに入る
    ============================================================ */
 async function commit() {
+  if (draft.entry_id) return commitEdit();
   if (!draft.items.length) { closeSheet(); return; }
   $('#commit').disabled = true;
   const payload = {
@@ -771,6 +885,52 @@ async function commit() {
     console.error(err);
     queue(payload);                       // 圏外でも記録を落とさない
     closeSheet(); toast('オフラインのため後で送ります');
+  }
+}
+
+/* 編集の保存。ヘッダの合計は nt_recalc_entry トリガが明細から
+   引き直すので、こちらでは触らない（二重計算の食い違いを避ける） */
+async function commitEdit() {
+  const btn = $('#commit');
+  btn.disabled = true;
+  try {
+    const id = draft.entry_id;
+
+    // 品目を全部外したなら、0kcalの抜け殻を残さず記録ごと消す
+    if (!draft.items.length) {
+      const { error } = await sb.from('nt_meal_entry').delete().eq('id', id);
+      if (error) throw error;
+      closeSheet(); toast('記録を削除しました'); refresh();
+      return;
+    }
+
+    const keep = new Set(draft.items.map(i => i.id));
+    const gone = draft.originalIds.filter(x => !keep.has(x));
+    if (gone.length) {
+      const { error } = await sb.from('nt_meal_item').delete().in('id', gone);
+      if (error) throw error;
+    }
+
+    for (const it of draft.items) {
+      const o = it.options[it.default_option];
+      const { error } = await sb.from('nt_meal_item').update({
+        option_label: o.label,
+        factor: o.factor,
+        ...it.selected,
+      }).eq('id', it.id);
+      if (error) throw error;
+    }
+
+    const name = ($('#editName')?.value ?? '').trim() || '食事';
+    const { error: e2 } = await sb.from('nt_meal_entry')
+      .update({ note: name }).eq('id', id);
+    if (e2) throw e2;
+
+    closeSheet(); toast('直しました'); refresh();
+  } catch (err) {
+    console.error(err);
+    btn.disabled = false;
+    toast('保存できませんでした');
   }
 }
 
