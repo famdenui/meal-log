@@ -41,11 +41,17 @@
   --sans:"Zen Kaku Gothic New",system-ui,sans-serif;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;height:100%}
+/* body に height:100% を掛けると、下の padding がスクロール範囲を
+   広げてくれない（枠の内側に押し込まれる）。最後のカードが必ず
+   下部バーの裏に潜るので min-height で持たせる */
+html{height:100%}
+html,body{margin:0}
 body{
   background:var(--bg);color:var(--ink);font-family:var(--sans);
   font-size:15px;line-height:1.6;
-  padding-bottom:calc(84px + env(safe-area-inset-bottom));
+  min-height:100%;
+  /* 下部の操作バー(約80px)＋見切れないための余白 */
+  padding-bottom:calc(124px + env(safe-area-inset-bottom));
 }
 .wrap{max-width:480px;margin:0 auto;padding:0 var(--pad)}
 button{font:inherit;color:inherit;border:none;background:none;cursor:pointer}
@@ -128,10 +134,10 @@ header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-sp
 
 /* --- 通知 --------------------------------------------------- */
 .notify{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
-  padding:14px 16px;display:flex;align-items:center;gap:12px}
-.notify .txt{flex:1;font-size:13px;color:var(--ink-2);line-height:1.55}
+  padding:14px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.notify .txt{flex:1 1 190px;font-size:13px;color:var(--ink-2);line-height:1.55}
 .notify .txt small{display:block;color:var(--muted);font-size:12px;margin-top:2px}
-.notify button{flex:none;background:var(--ink);color:var(--on-ink);border-radius:var(--r);
+.notify button{flex:0 0 auto;margin-left:auto;background:var(--ink);color:var(--on-ink);border-radius:var(--r);
   padding:10px 14px;font-size:13px;font-weight:500}
 .notify button[disabled]{opacity:.45}
 .notify.on .txt{color:var(--matsuba);font-weight:500}
@@ -558,7 +564,7 @@ async function refresh() {
   renderQuick();
   renderLog();
   renderReview(rv.data?.[0]);
-  renderNotify().catch(err => console.warn('notify ui', err));
+  renderNotify();
   if (state.target) {
     $('#phaseLabel').textContent = state.target.is_training ? 'トレ日' : 'オフ日';
   }
@@ -1135,40 +1141,62 @@ async function renderNotify() {
   wrap.hidden = false;
   box.className = 'notify';
 
-  // iOSはホーム画面に追加したアプリでないと通知を許可できない
-  if (isIOS() && !isStandalone()) {
-    box.innerHTML = `<div class="txt">ホーム画面に追加すると、通知を受け取れます
-      <small>共有ボタン →「ホーム画面に追加」</small></div>`;
-    return;
+  // どの状態でも必ず「次に何をすればいいか」を出す。
+  // ボタンが出ない理由が分からない画面は、壊れているのと同じ
+  const state_ = (txt, sub, cls) => {
+    box.className = 'notify' + (cls ? ' ' + cls : '');
+    box.innerHTML = `<div class="txt">${txt}${sub ? `<small>${sub}</small>` : ''}</div>`;
+  };
+
+  try {
+    // iOSはホーム画面に追加したアプリでないと通知を許可できない
+    if (isIOS() && !isStandalone()) {
+      state_('ホーム画面のアイコンから開くと、通知を有効にできます',
+             'Safariのままでは iOS が許可を出せません。共有ボタン →「ホーム画面に追加」');
+      return;
+    }
+
+    if (Notification.permission === 'denied') {
+      state_('この端末で通知がブロックされています',
+             '設定 → 通知 → Meal-log →「通知を許可」をオンにしてから、'
+           + 'アプリを開き直してください');
+      return;
+    }
+
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) {
+      state_('準備中です', 'アプリを一度閉じて開き直すと有効にできます');
+      return;
+    }
+    const sub = await reg.pushManager.getSubscription();
+
+    if (sub && Notification.permission === 'granted') {
+      const { data } = await sb.from('nt_push_subscription')
+        .select('notify_hour,enabled').eq('endpoint', sub.endpoint).maybeSingle();
+      if (data?.enabled === false) {
+        state_('通知は止まっています', 'もう一度有効にできます');
+        const on = el('button'); on.textContent = '有効にする';
+        on.onclick = () => enablePush(on);
+        box.append(on);
+        return;
+      }
+      state_('通知は有効です',
+             `${data?.notify_hour ?? 16}時に、足りない分だけお知らせします`, 'on');
+      const off = el('button'); off.textContent = '止める';
+      off.style.cssText = 'background:var(--paper);color:var(--ink-2);border:1px solid var(--line)';
+      off.onclick = () => disablePush(sub);
+      box.append(off);
+      return;
+    }
+
+    state_('16時に、足りない分だけお知らせします', '順調な日は通知しません');
+    const on = el('button'); on.textContent = '有効にする';
+    on.onclick = () => enablePush(on);
+    box.append(on);
+  } catch (err) {
+    console.error('renderNotify', err);
+    state_('通知の準備で問題が起きました', String(err?.message ?? err));
   }
-
-  const reg = await navigator.serviceWorker.getRegistration();
-  const sub = await reg?.pushManager.getSubscription();
-
-  if (sub && Notification.permission === 'granted') {
-    const { data } = await sb.from('nt_push_subscription')
-      .select('notify_hour').eq('endpoint', sub.endpoint).maybeSingle();
-    box.className = 'notify on';
-    box.innerHTML = `<div class="txt">通知は有効です
-      <small>${data?.notify_hour ?? 16}時に、足りない分だけお知らせします</small></div>`;
-    const off = el('button'); off.textContent = '止める';
-    off.style.cssText = 'background:var(--paper);color:var(--ink-2);border:1px solid var(--line)';
-    off.onclick = () => disablePush(sub);
-    box.append(off);
-    return;
-  }
-
-  if (Notification.permission === 'denied') {
-    box.innerHTML = `<div class="txt">通知がブロックされています
-      <small>端末の設定でこのアプリの通知を許可してください</small></div>`;
-    return;
-  }
-
-  box.innerHTML = `<div class="txt">16時に、足りない分だけお知らせします
-    <small>順調な日は通知しません</small></div>`;
-  const on = el('button'); on.textContent = '有効にする';
-  on.onclick = () => enablePush(on);
-  box.append(on);
 }
 
 async function enablePush(btn) {
