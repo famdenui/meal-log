@@ -11,7 +11,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Meal-log">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -20,8 +20,8 @@
    藍（あい）: 紺墨の地に藍と松葉。数字はタブular数字で桁を揃える
 
    色は3状態を撃ち分けるためにある。全部を青にすると信号が死ぬので、
-   基調の藍＝まだ足りない、松葉＝届いた、朱＝行き過ぎ、で使い分ける。
-   朱は削除ボタンにも使う。どちらも「行き過ぎ／戻せない」の合図
+   基調の藍＝まだ足りない、松葉＝届いた、金＝行き過ぎ、で使い分ける。
+   朱は削除ボタンだけに残す（取り返しのつかない操作の合図）
    ============================================================ */
 :root{
   --bg:#E9ECF1;
@@ -33,7 +33,7 @@
   --ai:#2B5C9B;         /* 藍 — 不足・行動を促す色 */
   --matsuba:#3A6B57;    /* 松葉 — 達成 */
   --kin:#B08A3E;        /* 金 — 超過の注意 */
-  --danger:#C4452D;     /* 朱 — 超過と削除。行き過ぎと取り消しの合図 */
+  --danger:#C4452D;     /* 朱 — 削除のみ */
   --on-ink:#F1F4F8;     /* 濃地の上に載せる文字 */
   --r:12px;             /* カード・入力欄 */
   --r-sm:9px;           /* ボタン内の小さな要素 */
@@ -55,18 +55,40 @@ body{
   /* 下部の操作バー(約80px)＋見切れないための余白 */
   padding-bottom:calc(124px + env(safe-area-inset-bottom));
 }
-.wrap{max-width:480px;margin:0 auto;padding:0 var(--pad)}
+.wrap{max-width:480px;margin:0 auto;
+  padding:0 calc(env(safe-area-inset-right) + var(--pad))
+          0 calc(env(safe-area-inset-left) + var(--pad))}
 button{font:inherit;color:inherit;border:none;background:none;cursor:pointer}
 h1,h2,h3{margin:0;font-weight:700;letter-spacing:.02em}
 .num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
 
 /* --- ヘッダ ------------------------------------------------ */
 header{
-  padding:20px var(--pad) 12px;max-width:480px;margin:0 auto;
+  /* iOSの表示モードによって安全域が0にも47pxにもなる。
+     max() を挟んで、どちらでも必ず余白が残るようにする */
+  padding:calc(max(env(safe-area-inset-top), 12px) + 14px) var(--pad) 12px;
+  max-width:480px;margin:0 auto;
   display:flex;align-items:baseline;justify-content:space-between;
 }
 header .today{font-size:19px}
+header .nav{display:flex;align-items:center;gap:2px}
+header .nav button{
+  width:30px;height:30px;font-size:19px;color:var(--muted);line-height:1;
+  border-radius:var(--r-pill);flex:none;
+}
+header .nav button:disabled{opacity:.25}
+header .nav button:active:not(:disabled){background:#DDE2EA}
 header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-spacing:.06em}
+/* トレ日は押して切り替えられる。押せると分かる程度の枠は要る */
+.phase{border:1px solid var(--line);border-radius:var(--r-pill);padding:5px 11px;
+  background:var(--paper)}
+.phase.train{background:var(--ink);color:var(--on-ink);border-color:var(--ink);font-weight:500}
+.phase:disabled{opacity:.5}
+/* 過去日を見ているときの帯 */
+.pastbar{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:var(--ink);color:var(--on-ink);border-radius:var(--r);
+  padding:10px 14px;font-size:13px;margin-bottom:10px}
+.pastbar button{color:var(--on-ink);text-decoration:underline;font-size:13px;flex:none}
 
 /* --- 見出しラベル ------------------------------------------ */
 .eyebrow{
@@ -87,15 +109,14 @@ header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-sp
 .fill{position:absolute;inset:0 auto 0 0;background:var(--ai);border-radius:var(--r-pill);
       transition:width .45s cubic-bezier(.2,.7,.3,1)}
 .gauge.hit .fill{background:var(--matsuba)}
-/* 行き過ぎは赤。琥珀では「注意」に見えず、超過だと気づけない */
-.gauge.over .fill{background:var(--danger)}
-.gauge.over .gauge-head .figs b{color:var(--danger)}
+.gauge.over .fill{background:var(--kin)}
+.gauge.over .gauge-head .figs b{color:var(--kin)}
 /* この先いつも通り食べた場合の着地点をハッチで見せる。
    実線と同じ色にしないと、着地先だけ別の意味に見える */
 .ghost{position:absolute;top:0;bottom:0;transition:left .45s,width .45s;
   background:repeating-linear-gradient(115deg,#2B5C9B33 0 4px,transparent 4px 8px)}
 .gauge.hit .ghost{background:repeating-linear-gradient(115deg,#3A6B5733 0 4px,transparent 4px 8px)}
-.gauge.over .ghost{background:repeating-linear-gradient(115deg,#C4452D40 0 4px,transparent 4px 8px)}
+.gauge.over .ghost{background:repeating-linear-gradient(115deg,#B08A3E40 0 4px,transparent 4px 8px)}
 .tick{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink);border-radius:var(--r-pill)}
 .gauge .note{margin:7px 0 0;font-size:12px;color:var(--muted)}
 .gauge .note b{font-family:var(--mono);color:var(--ink-2);font-weight:600}
@@ -164,7 +185,9 @@ header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-sp
 .dock{
   position:fixed;left:0;right:0;bottom:0;z-index:20;
   background:linear-gradient(180deg,#E9ECF100,#E9ECF1 22%);
-  padding:16px var(--pad) calc(16px + env(safe-area-inset-bottom));
+  padding:16px calc(env(safe-area-inset-right) + var(--pad))
+          calc(16px + env(safe-area-inset-bottom))
+          calc(env(safe-area-inset-left) + var(--pad));
 }
 .dock-in{max-width:480px;margin:0 auto;display:flex;gap:8px}
 .btn{
@@ -260,11 +283,16 @@ input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--ai);outl
 <body>
 
 <header>
-  <h1 class="today" id="dateLabel">—</h1>
-  <span class="meta" id="phaseLabel"></span>
+  <div class="nav">
+    <button id="prevDay" aria-label="前の日">‹</button>
+    <h1 class="today" id="dateLabel">—</h1>
+    <button id="nextDay" aria-label="次の日">›</button>
+  </div>
+  <button class="meta phase" id="phaseLabel"></button>
 </header>
 
 <div class="wrap" id="app" hidden>
+  <div id="pastWrap"></div>
   <section class="ledger" id="ledger"></section>
   <div id="coach"></div>
 
@@ -328,7 +356,8 @@ input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--ai);outl
   </div>
 </nav>
 
-<input type="file" id="file" accept="image/*" capture="environment" hidden>
+<!-- capture を付けるとカメラ固定になり、撮影済みの写真を選べなくなる -->
+<input type="file" id="file" accept="image/*" hidden>
 
 <!-- 確認カード -->
 <div class="sheet" id="sheet" hidden>
@@ -369,7 +398,21 @@ function today() {
   const jst = new Date(Date.now() + 9*3600e3);
   return new Date(jst.getTime() - 4*3600e3).toISOString().slice(0,10);
 }
-const DAY = today();
+let TODAY = today();
+let DAY = TODAY;                 // 表示中の日。過去も遡れる
+
+/* その日の記録として保存するための時刻。
+   過去日に足すときは「今の時刻」だと今日の記録になってしまうので、
+   選んでいる日の同じ時刻に置き換える（4時締めの内側に収まる12時基準） */
+function stampFor(day) {
+  if (day === TODAY) return new Date().toISOString();
+  return new Date(`${day}T12:00:00+09:00`).toISOString();
+}
+const shiftDay = (day, n) => {
+  const d = new Date(`${day}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0,10);
+};
 
 /* 食事の区分。表示順はそのまま1日の流れになる */
 const SLOTS = [
@@ -384,6 +427,8 @@ const SLOTS = [
 /* マイフードからの1タップ記録には推定が挟まらないので、
    時刻から当たりをつける。外れていてもその場で押し直せる */
 function guessSlot() {
+  // 過去日を見ているときの「今の時刻」は無意味。決め打ちしない
+  if (DAY !== TODAY) return 'other';
   const h = Number(new Date(Date.now() + 9*3600e3).toISOString().slice(11,13));
   if (h >= 4  && h < 10) return 'breakfast';
   if (h >= 10 && h < 15) return 'lunch';
@@ -401,8 +446,21 @@ let state = { user:null, target:null, day:null, foods:[], entries:[], expected:n
    リダイレクト許可リストと一致せず弾かれる（マジックリンクが効かない典型例） */
 const REDIRECT_TO = location.origin + location.pathname;
 
-init();
-async function init() {
+/* getSession を待つ間に state.user はまだ空なので、
+   onAuthStateChange 側の !state.user 判定では二重起動を防げない。
+   実行中の Promise 自体を掴んで1本に絞る */
+let booting = null;
+function init() {
+  return booting ??= boot().finally(() => { booting = null; });
+}
+init().catch(err => {
+  // ここで落ちると #app も #auth も hidden のまま、真っ白な画面になる
+  console.error('init failed', err);
+  showAuth();
+  authMsg('起動に失敗しました。通信状態を確認して開き直してください。', 'err');
+});
+
+async function boot() {
   // メール側で失効・使用済みだった場合はここで拾う
   if (showAuthErrorFromUrl()) { showAuth(); return; }
 
@@ -430,9 +488,80 @@ async function init() {
   $('#authMsg').hidden = true;
   $('#app').hidden = false;
   $('#dock').hidden = false;
-  $('#dateLabel').textContent = new Date(DAY).toLocaleDateString('ja-JP',{month:'long',day:'numeric',weekday:'short'});
+  paintDate();
   await refresh();
+  renderNotify();          // DAY に依存しないので日付移動では再実行しない
   flushQueue();
+}
+
+/* ============================================================
+   日付の移動
+   ------------------------------------------------------------
+   未来には行かせない。まだ起きていない日を開いても意味がなく、
+   「今日に戻れない」という迷子の原因になる
+   ============================================================ */
+$('#prevDay').onclick = () => goDay(shiftDay(DAY, -1));
+$('#nextDay').onclick = () => goDay(shiftDay(DAY, 1));
+
+/* 開きっぱなしで日付をまたぐと、ヘッダは昨日のままなのに
+   記録は今日に入る。復帰のたびに今日を測り直す */
+function syncToday() {
+  const now = today();
+  if (now === TODAY) return false;
+  const wasOnToday = DAY === TODAY;
+  TODAY = now;
+  if (wasOnToday) DAY = now;
+  return true;
+}
+const onResume = () => {
+  if (!state.user) return;
+  if (syncToday()) { paintDate(); refresh(); }
+};
+addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') onResume();
+});
+addEventListener('pageshow', onResume);
+
+async function goDay(day) {
+  if (day > TODAY) return;
+  DAY = day;
+  paintDate();
+  await refresh();
+}
+
+function paintDate() {
+  const d = new Date(`${DAY}T00:00:00+09:00`);
+  $('#dateLabel').textContent =
+    d.toLocaleDateString('ja-JP',{month:'long',day:'numeric',weekday:'short',timeZone:'Asia/Tokyo'});
+  $('#nextDay').disabled = DAY >= TODAY;
+
+  const box = $('#pastWrap');
+  if (DAY === TODAY) { box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="pastbar">
+    <span>過去の記録を見ています</span><button id="backToday">今日に戻る</button></div>`;
+  $('#backToday').onclick = () => goDay(TODAY);
+}
+
+/* ============================================================
+   トレ日の切り替え
+   ------------------------------------------------------------
+   元々ワークアウトアプリのセッションから自動で判定されている。
+   ここでの操作は「その日だけの上書き」で、自動判定は壊さない
+   ============================================================ */
+$('#phaseLabel').onclick = toggleTraining;
+
+async function toggleTraining() {
+  if (!state.target) return;               // 目標が出ていない日は触らせない
+  const next = !state.target.is_training;
+  const btn = $('#phaseLabel');
+  btn.disabled = true;
+  const { error } = await sb.from('nt_training_override').upsert({
+    user_id: state.user.id, day: DAY, is_training: next, updated_at: new Date().toISOString(),
+  }, { onConflict: 'user_id,day' });
+  btn.disabled = false;
+  if (error) { console.error(error); toast('切り替えられませんでした'); return; }
+  toast(next ? 'トレ日にしました' : 'オフ日にしました');
+  refresh();
 }
 
 function showAuth() {
@@ -561,10 +690,15 @@ async function signInPw() {
   }
   $('#pw').value = '';
   remember(email);
-  init();
+  // init() は onAuthStateChange(SIGNED_IN) 側から呼ばれる
 }
 
+/* 日付を素早く切り替えると、古い応答が後から届いて別の日の画面を
+   上書きすることがある。世代番号で「まだ見ている日か」を確かめる */
+let reqGen = 0;
 async function refresh() {
+  const gen = ++reqGen;
+  const day = DAY;
   const hour = Number(new Date(Date.now()+9*3600e3).toISOString().slice(11,13));
   const [tg, ent, fd, exp, rv, nf] = await Promise.all([
     sb.rpc('nt_daily_target', { p_user: state.user.id, p_day: DAY }),
@@ -573,23 +707,40 @@ async function refresh() {
     sb.from('nt_food').select('*').eq('is_archived', false)
       .order('use_count', { ascending:false }).limit(8),
     sb.rpc('nt_expected_rest_of_day', { p_user: state.user.id, p_day: DAY, p_hour: hour }),
-    sb.from('nt_weekly_report').select('*').order('week_end',{ascending:false}).limit(1),
+    sb.from('nt_weekly_report').select('*')
+      .lte('week_end', DAY).order('week_end',{ascending:false}).limit(1),
     // 通知バナーは一瞬で消える。中身はここに残っているので画面に出す
     sb.from('nt_notify_log').select('title,body,sent_at')
       .eq('day', DAY).order('sent_at',{ascending:false}).limit(1)
   ]);
+  if (gen !== reqGen) return;          // 表示中の日が変わっていたら捨てる
+
+  // postgrest は失敗しても reject しない。拾わないと
+  // 「データが無い」と「読めなかった」が画面上で区別できなくなる
+  const errs = [tg, ent, fd, exp, rv, nf].map(r => r.error).filter(Boolean);
+  if (errs.length) console.error('refresh', errs);
+
   state.target   = tg.data?.[0] ?? null;
   state.entries  = ent.data ?? [];
   state.foods    = fd.data ?? [];
-  state.expected = exp.data?.[0] ?? { kcal:0, protein_g:0, basis_days:0 };
+  // 過去日は「この先いつも通り食べたら」が成立しない。実測が結論
+  state.expected = DAY === TODAY
+    ? (exp.data?.[0] ?? { kcal:0, protein_g:0, basis_days:0 })
+    : { kcal:0, protein_g:0, basis_days:0 };
   renderLedger();
   renderQuick();
   renderLog();
   renderCoach(nf.data?.[0]);
   renderReview(rv.data?.[0]);
-  renderNotify();
+  const ph = $('#phaseLabel');
   if (state.target) {
-    $('#phaseLabel').textContent = state.target.is_training ? 'トレ日' : 'オフ日';
+    ph.textContent = state.target.is_training ? 'トレ日' : 'オフ日';
+    ph.classList.toggle('train', !!state.target.is_training);
+    ph.disabled = false;
+  } else {
+    ph.textContent = '—';
+    ph.classList.remove('train');
+    ph.disabled = true;
   }
 }
 
@@ -607,17 +758,19 @@ function renderLedger() {
   }),{kcal:0,protein:0});
 
   const reliable = (state.expected.basis_days ?? 0) >= 5;
+  const past = DAY !== TODAY;
   box.append(
     gauge('タンパク質','g', sum.protein, state.target.target_protein_g,
-          reliable ? Number(state.expected.protein_g) : 0, true),
+          reliable ? Number(state.expected.protein_g) : 0, true, past),
     gauge('カロリー','kcal', sum.kcal, state.target.target_kcal,
-          reliable ? Number(state.expected.kcal) : 0, false)
+          reliable ? Number(state.expected.kcal) : 0, false, past)
   );
 }
 
-function gauge(label, unit, eaten, target, expect, daily) {
+function gauge(label, unit, eaten, target, expect, daily, past) {
   const g = el('div','gauge');
   const proj = eaten + expect;
+  if (!target || !isFinite(target)) target = 1;   // 0除算で NaN% になるのを防ぐ
   const pctE = Math.min(eaten/target*100, 118);
   const pctP = Math.min(proj /target*100, 118);
   // 目盛りは常に「目標＝バーの85%位置」。超過分が視覚的に見切れない
@@ -642,7 +795,13 @@ function gauge(label, unit, eaten, target, expect, daily) {
   track.append(fill, ghost, tick);
 
   const note = el('p','note');
-  if (expect > 0) {
+  if (past) {
+    // 終わった日に「この先」の話をしても仕方がない。結果だけ書く
+    const gap = Math.round(target - eaten);
+    note.innerHTML = gap > 8  ? `<b>${gap}${unit}</b> 足りませんでした`
+                   : gap < -(target*0.12) ? `<b>${-gap}${unit}</b> 超えました`
+                   : '目標どおりでした';
+  } else if (expect > 0) {
     const gap = Math.round(target - proj);
     note.innerHTML = gap > 8
       ? `いつも通りでも <b>${gap}${unit}</b> 足りません`
@@ -676,7 +835,8 @@ function renderQuick() {
 }
 
 function toItem(f) {
-  const options = f.options ?? [{label:'普通',factor:1}];
+  const options = (Array.isArray(f.options) && f.options.length)
+    ? f.options : [{label:'普通',factor:1}];
   const i = Math.min(f.default_option ?? 0, options.length-1);
   const per = { kcal:+f.kcal, protein_g:+f.protein_g, fat_g:+f.fat_g, carb_g:+f.carb_g };
   return { name:f.name, emoji:f.emoji, matched_food_id:f.id, per_unit:per,
@@ -714,7 +874,8 @@ function renderLog() {
 
 function logRow(e) {
   const row = el('button','log-row');
-  const t = new Date(e.eaten_at).toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit'});
+  const t = new Date(e.eaten_at)
+    .toLocaleTimeString('ja-JP',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Tokyo'});
   row.innerHTML = `<span class="t num">${t}</span>
     <span class="n">${e.note ?? '食事'}</span>
     <span class="v"><b>${Math.round(e.kcal)}</b> kcal<br><span>P${Math.round(e.protein_g)}</span></span>
@@ -883,7 +1044,7 @@ $('#file').onchange = async e => {
     const b64 = await shrink(f);
     const { data, error } = await sb.functions.invoke('analyze-meal',
       { body:{ mode:'photo', image_base64:b64, media_type:'image/jpeg',
-               local_time:new Date().toISOString() }});
+               local_time: stampFor(DAY) }});
     if (error || data?.error) throw error ?? new Error(data.error);
     openConfirm(data, 'photo');
   } catch(err) {
@@ -906,7 +1067,7 @@ $('#btnText').onclick = () => {
     busy('推定しています');
     try {
       const { data, error } = await sb.functions.invoke('analyze-meal',
-        { body:{ mode:'text', text, local_time:new Date().toISOString() }});
+        { body:{ mode:'text', text, local_time: stampFor(DAY) }});
       if (error || data?.error) throw error ?? new Error(data.error);
       openConfirm(data, 'text');
     } catch(err) { console.error(err); toast('推定できませんでした'); }
@@ -925,8 +1086,14 @@ $('#btnWeight').onclick = () => {
     </div>`);
   $('#goW').onclick = async () => {
     const w = parseFloat($('#wkg').value); if (!w) return;
-    await sb.from('nt_weight_log').upsert(
+    const { error } = await sb.from('nt_weight_log').upsert(
       { user_id:state.user.id, logged_on:DAY, weight_kg:w }, { onConflict:'user_id,logged_on' });
+    if (error) {
+      // 体重は目標calの入力。黙って消えると翌日以降の目標が古い体重で出る
+      console.error('weight', error);
+      toast('体重を記録できませんでした');
+      return;
+    }
     closeSheet(); toast('記録しました'); refresh();
   };
 };
@@ -1019,7 +1186,7 @@ async function commit() {
   if (!draft.items.length) { closeSheet(); return; }
   $('#commit').disabled = true;
   const payload = {
-    eaten_at: new Date().toISOString(),
+    eaten_at: stampFor(DAY),
     meal_slot: draft.meal_slot ?? 'other',
     input_method: draft.method === 'myfood' ? 'myfood' : draft.method,
     note: draft.dish_name,
@@ -1089,7 +1256,7 @@ async function save(p) {
 
   const rows = [];
   for (const [i, it] of p.items.entries()) {
-    const foodId = it.matched_food_id ?? await promote(it);
+    const foodId = it.matched_food_id ?? await promote(it, p.input_method);
     rows.push({
       entry_id: entry.id, food_id: foodId, name: it.name, emoji: it.emoji,
       option_label: it.options[it.default_option].label,
@@ -1103,7 +1270,7 @@ async function save(p) {
 
 /* 確定した品目はマイフードに昇格させる。
    次回から推定を挟まず1タップで記録でき、数値もブレない */
-async function promote(it) {
+async function promote(it, method) {
   const { data:hit } = await sb.from('nt_food').select('id')
     .eq('name', it.name).eq('is_archived', false).maybeSingle();
   if (hit) return hit.id;
@@ -1112,7 +1279,7 @@ async function promote(it) {
     kcal: it.per_unit.kcal, protein_g: it.per_unit.protein_g,
     fat_g: it.per_unit.fat_g, carb_g: it.per_unit.carb_g,
     options: it.options, default_option: it.default_option,
-    source: draft.method === 'photo' ? 'ai_photo' : 'ai_text'
+    source: method === 'photo' ? 'ai_photo' : 'ai_text'
   }).select('id').single();
   return made?.id ?? null;
 }
@@ -1123,13 +1290,28 @@ const queue = p => {
   const q = JSON.parse(localStorage.getItem(QK) ?? '[]');
   q.push(p); localStorage.setItem(QK, JSON.stringify(q));
 };
+/* 二重に走ると、同じ待ち行列を2つのループが読んで同じ記録を2回送る。
+   online イベントは回線が揺れるたびに何度も飛ぶので、必ず1本に絞る */
+let flushing = false;
 async function flushQueue() {
+  if (flushing) return;
   const q = JSON.parse(localStorage.getItem(QK) ?? '[]');
   if (!q.length) return;
+  flushing = true;
   const rest = [];
-  for (const p of q) { try { await save(p); } catch { rest.push(p); } }
-  localStorage.setItem(QK, JSON.stringify(rest));
-  if (rest.length < q.length) { toast(`${q.length-rest.length}件を送信しました`); refresh(); }
+  let sent = 0;
+  try {
+    for (const p of q) {
+      try { await save(p); sent++; }
+      catch (err) {
+        console.error('flushQueue', err);
+        // 通信断なら取っておく。それ以外は何度送っても失敗するので捨てる
+        if (!navigator.onLine) rest.push(p);
+      }
+    }
+    localStorage.setItem(QK, JSON.stringify(rest));
+    if (sent) { toast(`${sent}件を送信しました`); refresh(); }
+  } finally { flushing = false; }
 }
 addEventListener('online', flushQueue);
 
@@ -1326,11 +1508,15 @@ if ('serviceWorker' in navigator) {
       .catch(err => console.warn('sw register failed', err));
   });
 
-  // 新しい版が有効になったら1度だけ読み直す。
-  // フラグを立てないと、更新のたびに再読込が連鎖する
+  // 初回インストールでも clients.claim() で controllerchange が飛ぶ。
+  // 無条件に再読込すると、進行中のログイン処理（?code= の引き換え）を
+  // 巻き添えで殺してしまい「リンクが時々効かない」状態になる
+  const hadController = !!navigator.serviceWorker.controller;
   let reloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (reloaded) return;
+    if (!hadController || reloaded) return;          // 初回は読み直す必要がない
+    if (new URLSearchParams(location.search).get('code')) return;  // ログイン中は触らない
+    if (!$('#sheet').hidden) return;                 // 入力中のシートを飛ばさない
     reloaded = true;
     location.reload();
   });

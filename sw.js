@@ -10,7 +10,7 @@
    ページ側の localStorage キューが持っていて、オンライン復帰時に流す。
    ============================================================ */
 
-const VERSION = 'v9';
+const VERSION = 'v13';
 const SHELL   = `nt-shell-${VERSION}`;   // 自分のファイル
 const VENDOR  = `nt-vendor-${VERSION}`;  // esm.sh / Google Fonts
 
@@ -22,6 +22,7 @@ const SHELL_FILES = [
   './icon-192.png',
   './icon-512.png',
   './apple-touch-icon.png',
+  './icon-maskable-512.png',
 ];
 
 /* 外部から取ってくるが、無いとアプリが起動しないもの */
@@ -129,7 +130,9 @@ self.addEventListener('push', (e) => {
 
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
-  const target = new URL(e.notification.data?.url ?? './', self.location.origin + self.registration.scope).href;
+  // registration.scope は既に絶対URL。origin と連結すると
+  // "famdenui.github.iohttps..." という存在しないホストになる
+  const target = new URL(e.notification.data?.url ?? './', self.registration.scope).href;
 
   e.waitUntil((async () => {
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
