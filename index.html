@@ -161,6 +161,24 @@ header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-sp
   background:var(--ink);color:var(--on-ink);border-color:var(--ink);font-weight:500}
 .slot-label{font-size:12px;color:var(--muted);margin:0 0 7px}
 
+/* --- 体重（値＋差分＋スパークライン）------------------------- */
+.wcard{background:var(--paper);border:1px solid var(--line);border-radius:var(--r);
+  padding:15px 16px 12px;width:100%;text-align:left;font:inherit;color:inherit;display:block}
+.wcard:active{background:#EEF1F6}
+.wtop{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+/* 大きな数字は tabular にしない。桁が揃う代わりに間延びして見える */
+.wtop .val{font-family:var(--mono);font-size:27px;font-weight:600;letter-spacing:-.02em}
+.wtop .val span{font-size:13px;font-weight:400;color:var(--muted);margin-left:2px}
+.wtop .lbl{font-size:11px;color:var(--muted);display:block;margin-bottom:1px}
+.wtop .st{font-size:12px;text-align:right;flex:none;line-height:1.5}
+.wtop .st b{display:block;font-family:var(--mono);font-size:14px;font-weight:600}
+.wtop .st.todo{color:var(--ai);font-weight:500}
+.wtop .st.done{color:var(--muted)}
+.wspark{margin:10px 0 6px;display:block;width:100%;height:46px;overflow:visible}
+.wfoot{display:flex;align-items:baseline;justify-content:space-between;
+  font-size:12px;color:var(--muted)}
+.wfoot b{font-family:var(--mono);color:var(--ink-2);font-weight:600}
+
 /* --- 届いた通知の控え ---------------------------------------- */
 .coach{background:var(--paper);border:1px solid var(--line);border-left:3px solid var(--ai);
   border-radius:var(--r);padding:13px 15px;margin-top:10px}
@@ -295,6 +313,9 @@ input:focus,textarea:focus,button:focus-visible{outline:2px solid var(--ai);outl
   <div id="pastWrap"></div>
   <section class="ledger" id="ledger"></section>
   <div id="coach"></div>
+
+  <p class="eyebrow">体重</p>
+  <div id="weight"></div>
 
   <p class="eyebrow">よく食べるもの</p>
   <div class="chips" id="quick"></div>
@@ -700,7 +721,7 @@ async function refresh() {
   const gen = ++reqGen;
   const day = DAY;
   const hour = Number(new Date(Date.now()+9*3600e3).toISOString().slice(11,13));
-  const [tg, ent, fd, exp, rv, nf] = await Promise.all([
+  const [tg, ent, fd, exp, rv, nf, wt] = await Promise.all([
     sb.rpc('nt_daily_target', { p_user: state.user.id, p_day: DAY }),
     sb.from('nt_meal_entry').select('id,eaten_at,note,meal_slot,kcal,protein_g,fat_g,carb_g')
       .eq('eaten_on', DAY).order('eaten_at'),
@@ -711,18 +732,22 @@ async function refresh() {
       .lte('week_end', DAY).order('week_end',{ascending:false}).limit(1),
     // 通知バナーは一瞬で消える。中身はここに残っているので画面に出す
     sb.from('nt_notify_log').select('title,body,sent_at')
-      .eq('day', DAY).order('sent_at',{ascending:false}).limit(1)
+      .eq('day', DAY).order('sent_at',{ascending:false}).limit(1),
+    // 体重は日々±0.8kg揺れる。日次の点は文脈で、読ませたいのは7日平均の線
+    sb.from('nt_v_weight_trend').select('day,weight_kg,trend_kg')
+      .gte('day', shiftDay(DAY, -29)).lte('day', DAY).order('day')
   ]);
   if (gen !== reqGen) return;          // 表示中の日が変わっていたら捨てる
 
   // postgrest は失敗しても reject しない。拾わないと
   // 「データが無い」と「読めなかった」が画面上で区別できなくなる
-  const errs = [tg, ent, fd, exp, rv, nf].map(r => r.error).filter(Boolean);
+  const errs = [tg, ent, fd, exp, rv, nf, wt].map(r => r.error).filter(Boolean);
   if (errs.length) console.error('refresh', errs);
 
   state.target   = tg.data?.[0] ?? null;
   state.entries  = ent.data ?? [];
   state.foods    = fd.data ?? [];
+  state.weight   = wt.data ?? [];
   // 過去日は「この先いつも通り食べたら」が成立しない。実測が結論
   state.expected = DAY === TODAY
     ? (exp.data?.[0] ?? { kcal:0, protein_g:0, basis_days:0 })
@@ -730,6 +755,7 @@ async function refresh() {
   renderLedger();
   renderQuick();
   renderLog();
+  renderWeight(wt.data ?? []);
   renderCoach(nf.data?.[0]);
   renderReview(rv.data?.[0]);
   const ph = $('#phaseLabel');
@@ -1009,6 +1035,89 @@ function armDelete() {
   };
 }
 
+/* ============================================================
+   体重
+   ------------------------------------------------------------
+   「今日入れたか」と「どう動いているか」を1枚で答える。
+   体重は日々±0.8kg揺れるので、主役は7日移動平均の線。
+   日次の実測は文脈として控えめな点で置くだけにする
+   ============================================================ */
+function renderWeight(rows) {
+  const box = $('#weight');
+  const todayRow = rows.find(r => r.day === DAY);
+  const label = DAY === TODAY ? '今日' : 'この日';
+
+  if (!rows.length) {
+    box.innerHTML = `<button class="wcard"><div class="wtop">
+      <span style="font-size:13px;color:var(--muted)">記録すると推移が出ます</span>
+      <span class="st todo">${label}はまだ</span></div></button>`;
+    box.querySelector('.wcard').onclick = openWeight;
+    return;
+  }
+
+  const last = rows[rows.length - 1];
+  const cur  = Number(last.trend_kg ?? last.weight_kg);
+
+  // 7日前の同じ指標と比べる。日次同士の比較は揺れを拾うだけで意味がない
+  const target = shiftDay(last.day, -7);
+  let base = null;
+  for (const r of rows) { if (r.day <= target) base = r; }
+  const prev = base ? Number(base.trend_kg ?? base.weight_kg) : null;
+  const d    = prev == null ? null : cur - prev;
+  const pct  = (d == null || !prev) ? null : d / prev * 100;
+
+  box.innerHTML = `<button class="wcard">
+    <div class="wtop">
+      <div><span class="lbl">7日平均</span>
+        <span class="val">${cur.toFixed(1)}<span>kg</span></span></div>
+      <span class="st ${todayRow ? 'done' : 'todo'}">
+        ${todayRow ? `<b>${Number(todayRow.weight_kg).toFixed(1)}</b>${label}は記録済み`
+                   : `${label}はまだ<b>記録する</b>`}</span>
+    </div>
+    ${spark(rows)}
+    <div class="wfoot">
+      <span>${d == null ? '7日分たまると増減が出ます'
+        : `7日で <b>${d >= 0 ? '+' : ''}${d.toFixed(1)}kg</b>`
+          + (pct == null ? '' : `（${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%）`)}</span>
+      <span>30日</span>
+    </div>
+  </button>`;
+  box.querySelector('.wcard').onclick = openWeight;
+}
+
+/* スパークライン。1系列なので凡例は置かず、線＝7日平均、点＝日次実測 */
+function spark(rows) {
+  // 描画幅とviewBoxの比がずれると、点が楕円に潰れる。実寸に近づけておく
+  const W = 330, H = 46, PAD = 5;
+  const from = new Date(`${shiftDay(rows[rows.length-1].day, -29)}T00:00:00Z`).getTime();
+  const span = 29 * 864e5;
+  const xs = d => PAD + (new Date(`${d}T00:00:00Z`).getTime() - from) / span * (W - PAD*2);
+
+  const vals = rows.flatMap(r => [Number(r.weight_kg), Number(r.trend_kg ?? r.weight_kg)])
+                   .filter(v => isFinite(v));
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  if (hi - lo < 0.6) { const m = (hi+lo)/2; lo = m - 0.3; hi = m + 0.3; }  // 平坦でも潰さない
+  const ys = v => H - PAD - (v - lo) / (hi - lo) * (H - PAD*2);
+
+  const dots = rows.map(r =>
+    `<circle cx="${xs(r.day).toFixed(1)}" cy="${ys(Number(r.weight_kg)).toFixed(1)}" r="2.1"
+             fill="var(--muted)" opacity=".42"/>`).join('');
+
+  const line = rows.filter(r => r.trend_kg != null);
+  const path = line.map((r,i) =>
+    `${i?'L':'M'}${xs(r.day).toFixed(1)},${ys(Number(r.trend_kg)).toFixed(1)}`).join(' ');
+  const tip = line.length ? line[line.length-1] : null;
+
+  return `<svg class="wspark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+               role="img" aria-label="過去30日の体重推移">
+    ${dots}
+    ${line.length > 1 ? `<path d="${path}" fill="none" stroke="var(--ai)" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"/>` : ''}
+    ${tip ? `<circle cx="${xs(tip.day).toFixed(1)}" cy="${ys(Number(tip.trend_kg)).toFixed(1)}"
+        r="3.4" fill="var(--ai)" stroke="var(--paper)" stroke-width="2"/>` : ''}
+  </svg>`;
+}
+
 /* 今日届いた通知の控え。iOSのバナーは数秒で消え、
    requireInteraction も効かないので、アプリ側に残しておかないと
    「鳴ったのに何だったか分からない」で終わる */
@@ -1075,10 +1184,20 @@ $('#btnText').onclick = () => {
   };
 };
 
-$('#btnWeight').onclick = () => {
-  sheet(`<div class="sheet-head"><h2>体重</h2></div>
-    <p class="sheet-note">起床後・排尿後が最も安定します</p>
-    <input type="number" id="wkg" inputmode="decimal" step="0.1" placeholder="55.4">
+$('#btnWeight').onclick = openWeight;
+
+function openWeight() {
+  const known = state.weight?.find(r => r.day === DAY);
+  const latest = state.weight?.[state.weight.length - 1];
+  sheet(`<div class="sheet-head"><h2>体重</h2>
+      <span style="font-size:12px;color:var(--muted)">${
+        DAY === TODAY ? '今日' : new Date(`${DAY}T00:00:00+09:00`)
+          .toLocaleDateString('ja-JP',{month:'numeric',day:'numeric',timeZone:'Asia/Tokyo'})}</span></div>
+    <p class="sheet-note">${known
+      ? `記録済み（${Number(known.weight_kg).toFixed(1)}kg）。上書きできます`
+      : '起床後・排尿後が最も安定します'}</p>
+    <input type="number" id="wkg" inputmode="decimal" step="0.1" placeholder="${
+      latest ? Number(latest.weight_kg).toFixed(1) : '55.4'}">
     <div style="height:10px"></div>
     <div class="row">
       <button class="btn ghost-btn" style="flex:1" data-close>やめる</button>
@@ -1096,7 +1215,8 @@ $('#btnWeight').onclick = () => {
     }
     closeSheet(); toast('記録しました'); refresh();
   };
-};
+  if (known) $('#wkg').value = Number(known.weight_kg).toFixed(1);
+}
 
 /* 長辺1024px / q0.7。通信量と推定精度のちょうどいい交点 */
 async function shrink(file) {
