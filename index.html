@@ -129,6 +129,10 @@ header .meta{font-family:var(--mono);font-size:12px;color:var(--muted);letter-sp
 }
 .chip:active{background:#EEF1F6}
 .chip .p{font-family:var(--mono);font-size:11px;color:var(--muted)}
+/* セットは1タップで複数品目が入る。単品と同じ見た目だと押し間違えるので、
+   枠と文字を藍にして先頭にまとめる */
+.chip.set{border-color:var(--ai);color:var(--ai)}
+.chip.set .p{color:var(--ai);opacity:.7}
 
 /* --- 記録リスト -------------------------------------------- */
 .log-row{
@@ -429,6 +433,14 @@ function stampFor(day) {
   if (day === TODAY) return new Date().toISOString();
   return new Date(`${day}T12:00:00+09:00`).toISOString();
 }
+/* AIに渡す時刻。ISO(UTC)のまま渡すと 18:11 JST が「09:11」と読まれ、
+   夕食が朝食に分類される。日本時間の見たままの文字列で渡す */
+function localTimeFor(day) {
+  const base = day === TODAY ? new Date() : new Date(`${day}T12:00:00+09:00`);
+  return new Date(base.getTime() + 9*3600e3)
+    .toISOString().slice(0,16).replace('T',' ') + ' (JST)';
+}
+
 const shiftDay = (day, n) => {
   const d = new Date(`${day}T00:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
@@ -457,7 +469,20 @@ function guessSlot() {
   return 'snack';
 }
 
-let state = { user:null, target:null, day:null, foods:[], entries:[], expected:null };
+/* 区分は時計を最優先にする。写真の見た目やAIの読みより
+   「今が何時か」の方が確実で、押し直す手間が減る。
+   過去日を見ているときだけ、推定側の答えを使う */
+function pickSlot(hint, trust = false) {
+  // セットは本人が「これは朝食」と決めて作ったもの。時計で上書きしない
+  if (trust && hint) return hint;
+  if (DAY === TODAY) return guessSlot();
+  return hint ?? 'other';
+}
+
+const SLOT_EMOJI = { breakfast:'🌅', lunch:'🍱', dinner:'🌙',
+                     snack:'🍪', supplement:'🥤', other:'🍽' };
+
+let state = { user:null, target:null, day:null, foods:[], sets:[], entries:[], expected:null };
 
 /* ============================================================
    起動
@@ -721,7 +746,7 @@ async function refresh() {
   const gen = ++reqGen;
   const day = DAY;
   const hour = Number(new Date(Date.now()+9*3600e3).toISOString().slice(11,13));
-  const [tg, ent, fd, exp, rv, nf, wt] = await Promise.all([
+  const [tg, ent, fd, exp, rv, nf, wt, st] = await Promise.all([
     sb.rpc('nt_daily_target', { p_user: state.user.id, p_day: DAY }),
     sb.from('nt_meal_entry').select('id,eaten_at,note,meal_slot,kcal,protein_g,fat_g,carb_g')
       .eq('eaten_on', DAY).order('eaten_at'),
@@ -735,18 +760,23 @@ async function refresh() {
       .eq('day', DAY).order('sent_at',{ascending:false}).limit(1),
     // 体重は日々±0.8kg揺れる。日次の点は文脈で、読ませたいのは7日平均の線
     sb.from('nt_v_weight_trend').select('day,weight_kg,trend_kg')
-      .gte('day', shiftDay(DAY, -29)).lte('day', DAY).order('day')
+      .gte('day', shiftDay(DAY, -29)).lte('day', DAY).order('day'),
+    // よく食べる組み合わせ。中身のマイフードごと1往復で取る
+    sb.from('nt_food_set')
+      .select('id,name,emoji,meal_slot,items:nt_food_set_item(position,factor,food:nt_food(*))')
+      .eq('is_archived', false).order('use_count', { ascending:false }).limit(6)
   ]);
   if (gen !== reqGen) return;          // 表示中の日が変わっていたら捨てる
 
   // postgrest は失敗しても reject しない。拾わないと
   // 「データが無い」と「読めなかった」が画面上で区別できなくなる
-  const errs = [tg, ent, fd, exp, rv, nf, wt].map(r => r.error).filter(Boolean);
+  const errs = [tg, ent, fd, exp, rv, nf, wt, st].map(r => r.error).filter(Boolean);
   if (errs.length) console.error('refresh', errs);
 
   state.target   = tg.data?.[0] ?? null;
   state.entries  = ent.data ?? [];
   state.foods    = fd.data ?? [];
+  state.sets     = st.data ?? [];
   state.weight   = wt.data ?? [];
   // 過去日は「この先いつも通り食べたら」が成立しない。実測が結論
   state.expected = DAY === TODAY
@@ -845,31 +875,71 @@ function gauge(label, unit, eaten, target, expect, daily, past) {
    ============================================================ */
 function renderQuick() {
   const box = $('#quick'); box.innerHTML = '';
-  if (!state.foods.length) {
+  const sets = state.sets ?? [];
+  if (!sets.length && !state.foods.length) {
     box.innerHTML = '<p class="empty">記録を確定すると、ここに並んで1タップで再利用できます。</p>';
     return;
   }
+  // セットを先に出す。毎朝同じ組み合わせを単品で4回押すのは、
+  // 記録が続かなくなる一番の理由になる
+  sets.forEach(s => {
+    const items = setItems(s);
+    if (!items.length) return;            // 中身が消えたセットは出さない
+    const p = items.reduce((a,i) => a + i.selected.protein_g, 0);
+    const b = el('button','chip set');
+    b.innerHTML = `${s.emoji ?? '🍱'} ${s.name} <span class="p">${items.length}品 P${Math.round(p)}</span>`;
+    b.onclick = () => openConfirm({
+      dish_name: s.name, meal_slot: s.meal_slot ?? undefined,
+      note:'', min_confidence:1, items, set_id: s.id
+    }, 'myfood');
+    box.append(b);
+  });
   state.foods.forEach(f => {
     const b = el('button','chip');
     b.innerHTML = `${f.emoji ?? '🍽'} ${f.name} <span class="p">P${Math.round(f.protein_g)}</span>`;
     b.onclick = () => openConfirm({
-      dish_name: f.name, meal_slot: guessSlot(), note:'', min_confidence:1,
-      items:[toItem(f)]
+      dish_name: f.name, note:'', min_confidence:1, items:[toItem(f)]
     }, 'myfood');
     box.append(b);
   });
 }
 
+/* セットの明細をマイフードの数値から組み立てる。
+   保存された倍率が選択肢に無いとき（ヨーグルト半分など）は
+   その倍率を選択肢として足す。勝手に近い量へ寄せない */
+function setItems(s) {
+  return (s.items ?? [])
+    .slice().sort((a,b) => Number(a.position) - Number(b.position))
+    .filter(r => r.food)
+    .map(r => {
+      const it = toItem(r.food);
+      const f = Number(r.factor) || 1;
+      if (!it.options.some(o => Math.abs(Number(o.factor) - f) < 1e-6)) {
+        // 量の少ない順に並べないと「半分」が一番右に来て読み違える
+        it.options = [...it.options, { label: factorLabel(f), factor: f }]
+          .sort((a,b) => Number(a.factor) - Number(b.factor));
+      }
+      const i = it.options.findIndex(o => Math.abs(Number(o.factor) - f) < 1e-6);
+      it.default_option = i;
+      it.selected = scale(it.per_unit, it.options[i].factor);
+      return it;
+    });
+}
+const factorLabel = f => f === 0.5 ? '半分' : `×${r1(f)}`;
+
 function toItem(f) {
   const options = (Array.isArray(f.options) && f.options.length)
     ? f.options : [{label:'普通',factor:1}];
   const i = Math.min(f.default_option ?? 0, options.length-1);
-  const per = { kcal:+f.kcal, protein_g:+f.protein_g, fat_g:+f.fat_g, carb_g:+f.carb_g };
+  const per = { kcal:+f.kcal, protein_g:+f.protein_g, fat_g:+f.fat_g, carb_g:+f.carb_g,
+                fiber_g:+(f.fiber_g ?? 0), sugar_g:+(f.sugar_g ?? 0) };
   return { name:f.name, emoji:f.emoji, matched_food_id:f.id, per_unit:per,
            options, default_option:i, selected:scale(per, options[i].factor), confidence:1 };
 }
 const scale = (m,f) => ({
-  kcal:r1(m.kcal*f), protein_g:r1(m.protein_g*f), fat_g:r1(m.fat_g*f), carb_g:r1(m.carb_g*f)
+  kcal:r1(m.kcal*f), protein_g:r1(m.protein_g*f), fat_g:r1(m.fat_g*f), carb_g:r1(m.carb_g*f),
+  // 繊維と糖類は炭水化物の内訳なので、同じ倍率で動く
+  fiber_g:r1((m.fiber_g ?? 0)*f), sugar_g:r1((m.sugar_g ?? 0)*f)
 });
 const r1 = n => Math.round(n*10)/10;
 
@@ -954,11 +1024,14 @@ async function openEdit(entry) {
         protein_g: r1(Number(r.protein_g) / f),
         fat_g: r1(Number(r.fat_g) / f),
         carb_g: r1(Number(r.carb_g) / f),
+        // 旧データは null。0扱いにして、以後の記録から埋まっていく
+        fiber_g: r1(Number(r.fiber_g ?? 0) / f),
+        sugar_g: r1(Number(r.sugar_g ?? 0) / f),
       };
       const options = optionsFor(r, foods.find(x => x.id === r.food_id));
       const idx = Math.max(0, options.findIndex(o => Math.abs(Number(o.factor) - f) < 1e-6));
       return {
-        id: r.id, name: r.name, emoji: r.emoji,
+        id: r.id, name: r.name, emoji: r.emoji, food_id: r.food_id,
         per_unit: per, options, default_option: idx,
         selected: scale(per, options[idx].factor),
         confidence: Number(r.confidence ?? 1),
@@ -987,12 +1060,15 @@ async function openEdit(entry) {
       <div class="total" id="total"></div>
       <button class="btn" id="commit" style="width:100%">保存する</button>
       <div style="height:10px"></div>
+      <button class="btn ghost-btn" id="saveSet" style="width:100%">セットとして保存</button>
+      <div style="height:10px"></div>
       <button class="danger" id="delEntry">この記録を削除</button>
       <div style="height:6px"></div>`);
     $('#editName').value = draft.dish_name;
     drawSlots();
     drawItems();
     $('#commit').onclick = commit;
+    $('#saveSet').onclick = openSaveSet;
     armDelete();
   } catch (err) {
     console.error(err);
@@ -1010,6 +1086,44 @@ function optionsFor(row, food) {
     opts.push({ label: row.option_label || `×${f}`, factor: f });
   }
   return opts.sort((a, b) => a.factor - b.factor);
+}
+
+/* いまの記録の組み合わせをセットとして残す。
+   マイフードに紐づいていない品目は次回そのまま再現できないので、
+   黙って0kcalで並べるより外して、外したことを画面に書く */
+function openSaveSet() {
+  const usable = draft.items.filter(i => i.food_id);
+  if (!usable.length) { toast('マイフードの品目が無いので保存できません'); return; }
+  const dropped = draft.items.length - usable.length;
+  const slot    = draft.meal_slot ?? 'other';
+  const suggest = ($('#editName')?.value ?? '').trim() || draft.dish_name || 'セット';
+  const items   = usable.map(i => ({
+    food_id: i.food_id, factor: i.options[i.default_option].factor
+  }));
+
+  sheet(`<div class="sheet-head"><h2>セットとして保存</h2>
+      <button data-close style="color:var(--muted);font-size:13px">やめる</button></div>
+    <p class="sheet-note">${usable.map(i => i.name).join('・')}${
+      dropped ? `<br>マイフードに無い${dropped}品は外します` : ''}</p>
+    <input type="text" id="setName" placeholder="セットの名前">
+    <div style="height:14px"></div>
+    <button class="btn" id="goSet" style="width:100%">保存する</button>
+    <div style="height:6px"></div>`);
+  $('#setName').value = suggest;
+  $('#goSet').onclick = async () => {
+    const name = $('#setName').value.trim();
+    if (!name) { toast('名前を入れてください'); return; }
+    $('#goSet').disabled = true;
+    const { error } = await sb.rpc('nt_food_set_save', {
+      p_name: name, p_emoji: SLOT_EMOJI[slot] ?? '🍽',
+      p_slot: slot, p_items: items
+    });
+    if (error) {
+      console.error(error); $('#goSet').disabled = false;
+      toast('保存できませんでした'); return;
+    }
+    closeSheet(); toast('セットに追加しました'); refresh();
+  };
 }
 
 /* 削除は2段階。1回目で確認、2回目で実行 */
@@ -1153,7 +1267,7 @@ $('#file').onchange = async e => {
     const b64 = await shrink(f);
     const { data, error } = await sb.functions.invoke('analyze-meal',
       { body:{ mode:'photo', image_base64:b64, media_type:'image/jpeg',
-               local_time: stampFor(DAY) }});
+               local_time: localTimeFor(DAY) }});
     if (error || data?.error) throw error ?? new Error(data.error);
     openConfirm(data, 'photo');
   } catch(err) {
@@ -1176,7 +1290,7 @@ $('#btnText').onclick = () => {
     busy('推定しています');
     try {
       const { data, error } = await sb.functions.invoke('analyze-meal',
-        { body:{ mode:'text', text, local_time: stampFor(DAY) }});
+        { body:{ mode:'text', text, local_time: localTimeFor(DAY) }});
       if (error || data?.error) throw error ?? new Error(data.error);
       openConfirm(data, 'text');
     } catch(err) { console.error(err); toast('推定できませんでした'); }
@@ -1237,7 +1351,7 @@ let draft = null;
 function openConfirm(result, method) {
   draft = {
     ...result, method,
-    meal_slot: result.meal_slot ?? guessSlot(),
+    meal_slot: pickSlot(result.meal_slot, !!result.set_id),
     items: result.items.map(i => ({...i})),
   };
   sheet(`
@@ -1249,10 +1363,21 @@ function openConfirm(result, method) {
     <div id="items"></div>
     <div class="total" id="total"></div>
     <button class="btn" id="commit" style="width:100%">この内容で記録する</button>
+    ${draft.set_id
+      ? '<div style="height:10px"></div><button class="danger" id="delSet">このセットを消す</button>'
+      : ''}
     <div style="height:6px"></div>`);
   drawSlots();
   drawItems();
   $('#commit').onclick = commit;
+  if (draft.set_id) $('#delSet').onclick = () => archiveSet(draft.set_id);
+}
+
+async function archiveSet(id) {
+  const { error } = await sb.from('nt_food_set')
+    .update({ is_archived: true }).eq('id', id);
+  if (error) { console.error(error); toast('消せませんでした'); return; }
+  closeSheet(); toast('セットを消しました'); refresh();
 }
 
 function drawItems() {
@@ -1305,6 +1430,7 @@ async function commit() {
   if (draft.entry_id) return commitEdit();
   if (!draft.items.length) { closeSheet(); return; }
   $('#commit').disabled = true;
+  const setId = draft.set_id;          // closeSheet の後に draft は当てにならない
   const payload = {
     eaten_at: stampFor(DAY),
     meal_slot: draft.meal_slot ?? 'other',
@@ -1314,6 +1440,11 @@ async function commit() {
   };
   try {
     await save(payload);
+    // 並び順のためだけの加算。失敗しても記録は成立しているので握りつぶす
+    if (setId) {
+      const { error } = await sb.rpc('nt_food_set_used', { p_set: setId });
+      if (error) console.error('set use_count', error);
+    }
     closeSheet(); toast('記録しました'); refresh();
   } catch (err) {
     console.error(err);
@@ -1398,6 +1529,7 @@ async function promote(it, method) {
     user_id: state.user.id, name: it.name, emoji: it.emoji,
     kcal: it.per_unit.kcal, protein_g: it.per_unit.protein_g,
     fat_g: it.per_unit.fat_g, carb_g: it.per_unit.carb_g,
+    fiber_g: it.per_unit.fiber_g ?? null, sugar_g: it.per_unit.sugar_g ?? null,
     options: it.options, default_option: it.default_option,
     source: method === 'photo' ? 'ai_photo' : 'ai_text'
   }).select('id').single();

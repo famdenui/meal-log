@@ -10,7 +10,7 @@
    ページ側の localStorage キューが持っていて、オンライン復帰時に流す。
    ============================================================ */
 
-const VERSION = 'v14';
+const VERSION = 'v16';
 const SHELL   = `nt-shell-${VERSION}`;   // 自分のファイル
 const VENDOR  = `nt-vendor-${VERSION}`;  // esm.sh / Google Fonts
 
